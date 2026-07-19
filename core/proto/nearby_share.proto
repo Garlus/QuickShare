@@ -1,0 +1,157 @@
+syntax = "proto2";
+
+package quickshare;
+
+// === Top-level Frame ===
+
+message Frame {
+  enum Version {
+    V1_0 = 1;
+    UNKNOWN_VERSION = 0;
+  }
+  optional Version version = 1 [default = V1_0];
+  optional V1Frame v1 = 2;
+}
+
+// === V1 Frame ===
+
+message V1Frame {
+  enum FrameType {
+    DEVICE_PROFILE = 1;
+    CONNECTION_REQUEST = 2;
+    CONNECTION_RESPONSE = 3;
+    PAYLOAD_TRANSFER = 4;
+    PAYLOAD_CHUNK = 5;
+    DISCONNECTION = 6;
+    BANDWIDTH_ESTIMATION = 7;
+    KEEP_ALIVE = 8;
+    CONNECTION_RESULT = 9;
+  }
+  optional FrameType type = 1;
+  optional DeviceProfileFrame device_profile = 2;
+  optional ConnectionRequestFrame connection_request = 3;
+  optional ConnectionResponseFrame connection_response = 4;
+  optional PayloadTransferFrame payload_transfer = 5;
+  optional PayloadChunkFrame payload_chunk = 6;
+  optional DisconnectionFrame disconnection = 7;
+  optional BandwidthEstimationFrame bandwidth_estimation = 8;
+  optional KeepAliveFrame keep_alive = 9;
+  optional ConnectionResultFrame connection_result = 10;
+}
+
+// === Device Profile ===
+
+message DeviceProfileFrame {
+  optional bytes endpoint_id = 1;
+  optional string device_name = 2;
+  optional DeviceType device_type = 3;
+
+  enum DeviceType {
+    PHONE = 0;
+    TABLET = 1;
+    LAPTOP = 2;
+    DESKTOP = 3;
+  }
+}
+
+// === Connection ===
+
+message ConnectionRequestFrame {
+  optional bytes endpoint_id = 1;
+  optional bytes certificate = 2;
+  optional Medium medium = 3;
+
+  enum Medium {
+    BLUETOOTH_CLASSIC = 0;
+    BLE = 1;
+    WIFI_HOTSPOT = 2;
+    WIFI_LAN = 3;
+    WIFI_AWARE = 4;
+    INFRARED = 5;
+    WEB_RTC = 6;
+  }
+}
+
+message ConnectionResponseFrame {
+  enum Status {
+    ACCEPT = 0;
+    REJECT = 1;
+    NOT_CONNECTED = 2;
+  }
+  optional Status status = 1;
+  optional bytes endpoint_id = 2;
+}
+
+message ConnectionResultFrame {
+  enum Status {
+    RESULT_SUCCESS = 0;
+    RESULT_ERROR = 1;
+  }
+  optional Status status = 1;
+  optional string error_message = 2;
+}
+
+// === Payload Transfer ===
+
+message PayloadTransferFrame {
+  enum PayloadType {
+    FILE = 1;
+    BYTES = 2;
+    STREAM = 3;
+  }
+  optional bytes payload_id = 1;
+  optional PayloadType type = 2;
+  optional FileInfo file_info = 3;
+  optional bytes bytes_payload = 4;
+
+  message FileInfo {
+    optional string file_name = 1;
+    optional int64 file_size = 2;
+    optional string mime_type = 3;
+    optional int64 payload_chunk_size = 4;
+    optional int64 offset = 5;
+    optional string parent_folder = 6;
+  }
+}
+
+message PayloadChunkFrame {
+  optional bytes payload_id = 1;
+  optional int64 offset = 2;
+  optional bytes chunk = 3;
+}
+
+// === Keep Alive & Disconnect ===
+
+message KeepAliveFrame {
+  optional bool response_requested = 1;
+}
+
+message DisconnectionFrame {
+  // No fields currently defined
+}
+
+message BandwidthEstimationFrame {
+  optional int32 estimated_bandwidth_kbps = 1;
+}
+
+// === Advertisement (BLE Service Data) ===
+
+message AdvertisementFrame {
+  optional bytes device_id = 1;
+  optional string device_name = 2;
+  optional bytes certificate = 3;
+  optional bytes salt = 4;
+  optional DeviceProfileFrame.DeviceType device_type = 5;
+}
+
+// === Credentials ===
+
+message DeviceCertificate {
+  optional bytes endpoint_id = 1;
+  optional bytes secret_id = 2;
+  optional bytes authenticity_key = 3;
+  optional bytes public_key = 4;
+  optional bytes metadata_encryption_key = 5;
+  optional int64 start_time = 6;
+  optional int64 end_time = 7;
+}

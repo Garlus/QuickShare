@@ -1,0 +1,4 @@
+module QuickShareBridge {
+    header "quickshare.h"
+    export *
+}
