@@ -60,7 +60,7 @@ targets:
       - macOS/ShareExtension
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.quickshare.share-extension
+        PRODUCT_BUNDLE_IDENTIFIER: com.quickshare.app.share-extension
         INFOPLIST_FILE: macOS/ShareExtension/ShareExtension-Info.plist
         SWIFT_OBJC_BRIDGING_HEADER: $(PROJECT_DIR)/macOS/Bridge/quickshare.h
         LIBRARY_SEARCH_PATHS:
