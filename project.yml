@@ -62,18 +62,4 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.quickshare.app.share-extension
         INFOPLIST_FILE: macOS/ShareExtension/ShareExtension-Info.plist
-        SWIFT_OBJC_BRIDGING_HEADER: $(PROJECT_DIR)/macOS/Bridge/quickshare.h
-        LIBRARY_SEARCH_PATHS:
-          - "$(PROJECT_DIR)/macOS/Bridge"
-        OTHER_LDFLAGS:
-          - "$(inherited)"
-          - "-lquickshare_core"
-          - "-framework"
-          - "CoreBluetooth"
-          - "-framework"
-          - "Security"
-          - "-framework"
-          - "SystemConfiguration"
-          - "-framework"
-          - "IOKit"
         CODE_SIGN_STYLE: Automatic
