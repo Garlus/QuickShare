@@ -9,20 +9,6 @@ settings:
   base:
     SWIFT_VERSION: "5.9"
     MACOSX_DEPLOYMENT_TARGET: "14.0"
-    LIBRARY_SEARCH_PATHS:
-      - "$(PROJECT_DIR)/macOS/Bridge"
-    HEADER_SEARCH_PATHS:
-      - "$(PROJECT_DIR)/macOS/Bridge"
-    OTHER_LINKER_FLAGS:
-      - "-lquickshare_core"
-      - "-framework"
-      - "CoreBluetooth"
-      - "-framework"
-      - "Security"
-      - "-framework"
-      - "IOKit"
-      - "-framework"
-      - "SystemConfiguration"
 
 targets:
   QuickShare:
@@ -31,6 +17,8 @@ targets:
     sources:
       - path: macOS/QuickShareApp
       - path: macOS/Sources/QuickShareBridge
+      - path: macOS/Bridge/quickshare.h
+        buildPhase: headers
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.quickshare.app
@@ -38,14 +26,29 @@ targets:
         SWIFT_OBJC_BRIDGING_HEADER: $(PROJECT_DIR)/macOS/Bridge/quickshare.h
         CODE_SIGN_STYLE: Automatic
         LSUIElement: "YES"
+        LIBRARY_SEARCH_PATHS:
+          - "$(PROJECT_DIR)/macOS/Bridge"
+        OTHER_LDFLAGS:
+          - "$(inherited)"
+          - "-lquickshare_core"
+          - "-framework"
+          - "CoreBluetooth"
+          - "-framework"
+          - "Security"
+          - "-framework"
+          - "SystemConfiguration"
+          - "-framework"
+          - "IOKit"
     dependencies:
       - target: ShareExtension
     preBuildScripts:
       - name: "Build Rust Core"
         script: |
+          export PATH="$HOME/.cargo/bin:$PATH"
           cd "$SRCROOT"
-          cargo build --release --target aarch64-apple-darwin -p quickshare-core
+          cargo build --release --target aarch64-apple-darwin -p quickshare-core 2>&1
           cp target/aarch64-apple-darwin/release/libquickshare_core.a macOS/Bridge/
+          echo "Rust core built successfully"
         basedOnDependencyAnalysis: false
         outputFiles:
           - "$(PROJECT_DIR)/macOS/Bridge/libquickshare_core.a"
@@ -59,4 +62,18 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.quickshare.share-extension
         INFOPLIST_FILE: macOS/ShareExtension/ShareExtension-Info.plist
+        SWIFT_OBJC_BRIDGING_HEADER: $(PROJECT_DIR)/macOS/Bridge/quickshare.h
+        LIBRARY_SEARCH_PATHS:
+          - "$(PROJECT_DIR)/macOS/Bridge"
+        OTHER_LDFLAGS:
+          - "$(inherited)"
+          - "-lquickshare_core"
+          - "-framework"
+          - "CoreBluetooth"
+          - "-framework"
+          - "Security"
+          - "-framework"
+          - "SystemConfiguration"
+          - "-framework"
+          - "IOKit"
         CODE_SIGN_STYLE: Automatic
