@@ -11,10 +11,10 @@ settings:
     MACOSX_DEPLOYMENT_TARGET: "14.0"
     LIBRARY_SEARCH_PATHS:
       - "$(PROJECT_DIR)/macOS/Bridge"
+    HEADER_SEARCH_PATHS:
+      - "$(PROJECT_DIR)/macOS/Bridge"
     OTHER_LINKER_FLAGS:
       - "-lquickshare_core"
-    OTHER_LDFLAGS:
-      - "$(inherited)"
       - "-framework"
       - "CoreBluetooth"
       - "-framework"
@@ -31,15 +31,11 @@ targets:
     sources:
       - path: macOS/QuickShareApp
       - path: macOS/Sources/QuickShareBridge
-      - path: macOS/Sources/CQuickShare
-        type: folder
-      - path: macOS/Bridge/quickshare.h
-        buildPhase: headers
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.quickshare.app
         INFOPLIST_FILE: macOS/QuickShareApp/Info.plist
-        SWIFT_OBJC_BRIDGING_HEADER: macOS/Bridge/quickshare.h
+        SWIFT_OBJC_BRIDGING_HEADER: $(PROJECT_DIR)/macOS/Bridge/quickshare.h
         CODE_SIGN_STYLE: Automatic
         LSUIElement: "YES"
     dependencies:
@@ -50,6 +46,9 @@ targets:
           cd "$SRCROOT"
           cargo build --release --target aarch64-apple-darwin -p quickshare-core
           cp target/aarch64-apple-darwin/release/libquickshare_core.a macOS/Bridge/
+        basedOnDependencyAnalysis: false
+        outputFiles:
+          - "$(PROJECT_DIR)/macOS/Bridge/libquickshare_core.a"
 
   ShareExtension:
     type: app-extension
@@ -60,5 +59,4 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.quickshare.share-extension
         INFOPLIST_FILE: macOS/ShareExtension/ShareExtension-Info.plist
-        SWIFT_OBJC_BRIDGING_HEADER: macOS/Bridge/quickshare.h
         CODE_SIGN_STYLE: Automatic

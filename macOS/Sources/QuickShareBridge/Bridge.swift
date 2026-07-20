@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(CQuickShare)
 import CQuickShare
+#endif
 
 // MARK: - Swift-friendly wrapper
 
