@@ -17,9 +17,10 @@ rustup target add aarch64-apple-darwin 2>/dev/null || true
 cd "$CORE_DIR"
 cargo build --release --target aarch64-apple-darwin
 
+STATIC_LIB="$PROJECT_DIR/target/aarch64-apple-darwin/release/libquickshare_core.a"
+
 # Copy static library to macOS bridge directory
-cp "$CORE_DIR/target/aarch64-apple-darwin/release/libquickshare_core.a" \
-   "$SCRIPT_DIR/Bridge/libquickshare_core.a"
+cp "$STATIC_LIB" "$SCRIPT_DIR/Bridge/libquickshare_core.a"
 
 echo "=== Rust static library built and copied ==="
 echo "Output: macOS/Bridge/libquickshare_core.a"

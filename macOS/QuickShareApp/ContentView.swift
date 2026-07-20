@@ -10,78 +10,6 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Custom Toolbar/Header to match mockup exactly
-            HStack {
-                // Invisible spacer to balance the traffic lights
-                Spacer()
-                    .frame(width: 70)
-
-                Spacer()
-
-                // Center Off / Share and Recieve Pill Toggle
-                HStack(spacing: 0) {
-                    Text("Off")
-                        .font(.system(size: 13, weight: .medium))
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 6)
-                        .background(!model.isActive ? Color.white : Color.clear)
-                        .clipShape(Capsule())
-                        .foregroundColor(!model.isActive ? .primary : .secondary)
-                        .shadow(color: !model.isActive ? Color.black.opacity(0.08) : Color.clear, radius: 1, x: 0, y: 1)
-                        .onTapGesture {
-                            withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
-                                model.isActive = false
-                            }
-                        }
-
-                    Divider()
-                        .frame(height: 16)
-                        .padding(.horizontal, 4)
-
-                    Text("Share and Recieve")
-                        .font(.system(size: 13, weight: .medium))
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 6)
-                        .background(model.isActive ? Color.white : Color.clear)
-                        .clipShape(Capsule())
-                        .foregroundColor(model.isActive ? .primary : .secondary)
-                        .shadow(color: model.isActive ? Color.black.opacity(0.08) : Color.clear, radius: 1, x: 0, y: 1)
-                        .onTapGesture {
-                            withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
-                                model.isActive = true
-                            }
-                        }
-                }
-                .padding(3)
-                .background(Color(.windowBackgroundColor).opacity(0.6))
-                .clipShape(Capsule())
-                .overlay(
-                    Capsule()
-                        .stroke(Color.black.opacity(0.05), lineWidth: 0.5)
-                )
-
-                Spacer()
-
-                // Right Settings Button
-                Button(action: { showSettings = true }) {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 16))
-                        .foregroundColor(.primary.opacity(0.8))
-                        .frame(width: 32, height: 32)
-                        .background(Color(.windowBackgroundColor).opacity(0.6))
-                        .clipShape(Circle())
-                        .overlay(
-                            Circle()
-                                .stroke(Color.black.opacity(0.05), lineWidth: 0.5)
-                        )
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 16)
-            .padding(.bottom, 24)
-
-            // Center Drop Zone
             ZStack {
                 RoundedRectangle(cornerRadius: 16)
                     .fill(isDragging ? Color.accentColor.opacity(0.05) : Color.clear)
@@ -104,7 +32,7 @@ struct ContentView: View {
                 }
             }
             .padding(.horizontal, 24)
-            .padding(.bottom, 24)
+            .padding(.vertical, 24)
             .onDrop(of: [.fileURL], isTargeted: $isDragging) { providers in
                 let group = DispatchGroup()
                 var urls: [URL] = []
@@ -128,7 +56,30 @@ struct ContentView: View {
                 return true
             }
         }
-        .background(Color(.windowBackgroundColor))
+        .background {
+            if model.isActive {
+                ProceduralBackgroundView()
+                    .ignoresSafeArea()
+            } else {
+                Color(.windowBackgroundColor)
+            }
+        }
+        .toolbar {
+            ToolbarItemGroup(placement: .principal) {
+                SingleSelectionSegmentedControl(
+                    ["Off", "Share and Receive"],
+                    selection: $model.isActive
+                )
+            }
+
+            ToolbarItem(placement: .automatic) {
+                Button(action: { showSettings = true }) {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 14))
+                        .foregroundColor(.primary.opacity(0.8))
+                }
+            }
+        }
         .sheet(isPresented: $showSettings) {
             SettingsSheetView(model: model, isPresented: $showSettings)
         }
@@ -148,7 +99,7 @@ struct SettingsSheetView: View {
         NavigationStack {
             SettingsView(model: model)
                 .navigationTitle("Settings")
-                .navigationBarTitleDisplayMode(.inline)
+
                 .toolbar {
                     ToolbarItem(placement: .confirmationAction) {
                         Button("Done") {
@@ -251,7 +202,6 @@ struct DevicePickerSheetView: View {
             isSending = true
         }
 
-        // Simulate progress for UI feedback (will link to real transfer in future)
         Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { timer in
             if sendProgress < 1.0 {
                 sendProgress += 0.05

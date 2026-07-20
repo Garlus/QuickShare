@@ -25,12 +25,15 @@ targets:
         INFOPLIST_FILE: macOS/QuickShareApp/Info.plist
         SWIFT_OBJC_BRIDGING_HEADER: $(PROJECT_DIR)/macOS/Bridge/quickshare.h
         CODE_SIGN_STYLE: Automatic
-        LSUIElement: "YES"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         LIBRARY_SEARCH_PATHS:
+          - "$(PROJECT_DIR)/macOS/Bridge"
+        FRAMEWORK_SEARCH_PATHS:
           - "$(PROJECT_DIR)/macOS/Bridge"
         OTHER_LDFLAGS:
           - "$(inherited)"
           - "-lquickshare_core"
+          - "-Wl,-deployment_target_mismatches,suppress"
           - "-framework"
           - "CoreBluetooth"
           - "-framework"
@@ -44,15 +47,9 @@ targets:
     preBuildScripts:
       - name: "Build Rust Core"
         script: |
-          export PATH="$HOME/.cargo/bin:$PATH"
-          export MACOSX_DEPLOYMENT_TARGET="14.0"
-          cd "$SRCROOT"
-          cargo build --release --target aarch64-apple-darwin -p quickshare-core 2>&1
-          cp target/aarch64-apple-darwin/release/libquickshare_core.a macOS/Bridge/
-          echo "Rust core built successfully"
-        basedOnDependencyAnalysis: false
-        outputFiles:
-          - "$(PROJECT_DIR)/macOS/Bridge/libquickshare_core.a"
+          # Build Rust core manually via terminal:
+          #   bash macOS/build.sh
+          echo "Rust core: use 'bash macOS/build.sh' to rebuild"
 
   ShareExtension:
     type: app-extension

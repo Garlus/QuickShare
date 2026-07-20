@@ -1,48 +1,45 @@
 import SwiftUI
 import Observation
 
+class AppDelegate: NSObject, NSApplicationDelegate {
+    var statusBarController: StatusBarController?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        statusBarController = StatusBarController()
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            if let existing = sender.windows.first(where: { $0.identifier?.rawValue == "main" }) {
+                existing.makeKeyAndOrderFront(nil)
+            }
+        } else {
+            sender.windows.forEach { window in
+                if window.identifier?.rawValue == "main" {
+                    window.makeKeyAndOrderFront(nil)
+                }
+            }
+        }
+        sender.activate(ignoringOtherApps: true)
+        return true
+    }
+}
+
 @main
 struct QuickShareApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @State private var model = QuickShareModel()
 
     var body: some Scene {
-        MenuBarExtra {
-            MenuBarView(model: model)
-        } label: {
-            Image(systemName: model.isActive
-                  ? "antenna.radiowaves.left.and.right"
-                  : "antenna.radiowaves.left.and.right.slash")
-        }
-        .menuBarExtraStyle(.menu)
-
         Window("QuickShare", id: "main") {
             ContentView(model: model)
-                .frame(minWidth: 460, minHeight: 320)
-                .background(WindowAccessor()) // make title bar transparent
+                .frame(minWidth: 400, minHeight: 280)
         }
-        .windowStyle(.hiddenTitleBar) // hides standard title text
+        .windowStyle(.hiddenTitleBar)
 
         Settings {
             SettingsView(model: model)
                 .frame(width: 400, height: 300)
         }
     }
-}
-
-// Helper to access the NSWindow and make the titlebar completely transparent
-struct WindowAccessor: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-        DispatchQueue.main.async {
-            if let window = view.window {
-                window.titlebarAppearsTransparent = true
-                window.titleVisibility = .hidden
-                window.backgroundColor = .windowBackgroundColor
-                window.isMovableByWindowBackground = true
-            }
-        }
-        return view
-    }
-
-    func updateNSView(_ nsView: NSView, context: Context) {}
 }
