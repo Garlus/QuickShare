@@ -33,7 +33,7 @@ struct QuickShareApp: App {
     var body: some Scene {
         Window("QuickShare", id: "main") {
             ContentView(model: model)
-                .frame(minWidth: 400, minHeight: 280)
+                .frame(minWidth: 320, minHeight: 320)
         }
         .windowStyle(.hiddenTitleBar)
 

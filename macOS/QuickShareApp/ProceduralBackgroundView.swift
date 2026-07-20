@@ -166,11 +166,15 @@ fragment float4 fragmentMain(
     float vig = vignette(uv, 0.3);
     col *= 0.92 + vig * 0.08;
 
-    // ── 9. Feine Rausch-Textur ─────────────────────────────────
+    // ── 9. Taper to white towards toolbar ───────────────────────
+    float toolbarFade = pow(uv.y, 3.0);
+    col = mix(col, float3(1.0), toolbarFade);
+
+    // ── 10. Feine Rausch-Textur ─────────────────────────────────
     float fineNoise = fbm(p * 8.0 + float2(time * 0.01, time * 0.015), 3);
     col += (fineNoise - 0.5) * 0.015;
 
-    // ── 10. Gamma-Korrektur & Clamping ─────────────────────────
+    // ── 11. Gamma-Korrektur & Clamping ──────────────────────────
     col = pow(col, float3(1.0 / 1.05));
     col = clamp(col, 0.0, 1.0);
 
