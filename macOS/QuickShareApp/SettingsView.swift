@@ -1,0 +1,34 @@
+import SwiftUI
+
+struct SettingsView: View {
+    @Bindable var model: QuickShareModel
+
+    var body: some View {
+        Form {
+            Section("General") {
+                TextField("Device Name", text: Bindable(model).deviceName)
+                    .textFieldStyle(.roundedBorder)
+
+                Toggle("Receive Files", isOn: Bindable(model).isActive)
+            }
+
+            Section("Device Type") {
+                Picker("Type", selection: .constant(0)) {
+                    Text("Desktop").tag(0)
+                    Text("Laptop").tag(1)
+                }
+                .pickerStyle(.radioGroup)
+            }
+
+            Section("About") {
+                HStack {
+                    Text("Version")
+                    Spacer()
+                    Text("0.1.0")
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
