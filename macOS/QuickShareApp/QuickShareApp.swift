@@ -17,13 +17,32 @@ struct QuickShareApp: App {
 
         Window("QuickShare", id: "main") {
             ContentView(model: model)
-                .frame(minWidth: 420, minHeight: 320)
+                .frame(minWidth: 460, minHeight: 320)
+                .background(WindowAccessor()) // make title bar transparent
         }
-        .handlesExternalEvents(matching: []) // single window
+        .windowStyle(.hiddenTitleBar) // hides standard title text
 
         Settings {
             SettingsView(model: model)
                 .frame(width: 400, height: 300)
         }
     }
+}
+
+// Helper to access the NSWindow and make the titlebar completely transparent
+struct WindowAccessor: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async {
+            if let window = view.window {
+                window.titlebarAppearsTransparent = true
+                window.titleVisibility = .hidden
+                window.backgroundColor = .windowBackgroundColor
+                window.isMovableByWindowBackground = true
+            }
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
 }
