@@ -14,11 +14,6 @@ struct ContentView: View {
                 .tabItem {
                     Label("Transfers", systemImage: "arrow.up.arrow.down")
                 }
-
-            SettingsView(model: model)
-                .tabItem {
-                    Label("Settings", systemImage: "gear")
-                }
         }
         .padding()
     }
@@ -140,6 +135,5 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 400)
     }
 }

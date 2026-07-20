@@ -4,15 +4,21 @@ struct MenuBarView: View {
     @Bindable var model: QuickShareModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             // Header
-            HStack {
+            HStack(spacing: 6) {
                 Image(systemName: "antenna.radiowaves.left.and.right")
                     .foregroundStyle(model.isActive ? .green : .secondary)
                 Text("QuickShare")
                     .font(.headline)
+                Spacer()
+                if model.isActive {
+                    Circle()
+                        .fill(.green)
+                        .frame(width: 8, height: 8)
+                }
             }
-            .padding(.bottom, 4)
+            .padding(.bottom, 2)
 
             Divider()
 
@@ -21,44 +27,62 @@ struct MenuBarView: View {
                 Label("Receive Files", systemImage: "arrow.down.doc")
             }
             .toggleStyle(.switch)
+            .onChange(of: model.isActive) { _, active in
+                if active { model.startDiscovery() }
+                else { model.stopDiscovery() }
+            }
 
             // Status
-            HStack {
+            HStack(spacing: 4) {
                 Circle()
                     .fill(model.isDiscovering ? Color.green : Color.gray)
-                    .frame(width: 8, height: 8)
+                    .frame(width: 6, height: 6)
                 Text(model.isDiscovering ? "Discovering devices..." : "Discovery idle")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
-            Divider()
-
             // Device list
             if !model.discoveredDevices.isEmpty {
+                Divider()
+
                 Text("Nearby Devices")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
                 ForEach(model.discoveredDevices) { device in
-                    HStack {
+                    HStack(spacing: 6) {
                         Image(systemName: "macbook")
                             .foregroundStyle(.blue)
+                            .frame(width: 16)
                         Text(device.name)
                             .font(.subheadline)
+                            .lineLimit(1)
                         Spacer()
                         Text(device.connectionType)
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
+                    .padding(.vertical, 1)
                 }
-
-                Divider()
             }
 
-            // Navigation
+            Divider()
+
+            // Open QuickShare window
             Button("Open QuickShare...") {
                 NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+                // Fallback: open main window
+                if let window = NSApp.window(withIdentifier: "main") {
+                    window.makeKeyAndOrderFront(nil)
+                    NSApp.activate(ignoringOtherApps: true)
+                }
+            }
+            .buttonStyle(.plain)
+
+            // Settings
+            SettingsLink {
+                Label("Settings...", systemImage: "gear")
             }
             .buttonStyle(.plain)
 
@@ -68,8 +92,10 @@ struct MenuBarView: View {
                 NSApplication.shared.terminate(nil)
             }
             .keyboardShortcut("q")
+            .buttonStyle(.plain)
         }
-        .padding()
-        .frame(width: 260)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(width: 240)
     }
 }

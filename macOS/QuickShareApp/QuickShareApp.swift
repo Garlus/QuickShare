@@ -13,10 +13,17 @@ struct QuickShareApp: App {
                   ? "antenna.radiowaves.left.and.right"
                   : "antenna.radiowaves.left.and.right.slash")
         }
+        .menuBarExtraStyle(.menu)
 
         Window("QuickShare", id: "main") {
             ContentView(model: model)
                 .frame(minWidth: 420, minHeight: 320)
+        }
+        .handlesExternalEvents(matching: []) // single window
+
+        Settings {
+            SettingsView(model: model)
+                .frame(width: 400, height: 300)
         }
     }
 }
