@@ -45,6 +45,7 @@ targets:
       - name: "Build Rust Core"
         script: |
           export PATH="$HOME/.cargo/bin:$PATH"
+          export MACOSX_DEPLOYMENT_TARGET="14.0"
           cd "$SRCROOT"
           cargo build --release --target aarch64-apple-darwin -p quickshare-core 2>&1
           cp target/aarch64-apple-darwin/release/libquickshare_core.a macOS/Bridge/

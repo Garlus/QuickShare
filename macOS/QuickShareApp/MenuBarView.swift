@@ -2,6 +2,7 @@ import SwiftUI
 
 struct MenuBarView: View {
     @Bindable var model: QuickShareModel
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -27,10 +28,6 @@ struct MenuBarView: View {
                 Label("Receive Files", systemImage: "arrow.down.doc")
             }
             .toggleStyle(.switch)
-            .onChange(of: model.isActive) { _, active in
-                if active { model.startDiscovery() }
-                else { model.stopDiscovery() }
-            }
 
             // Status
             HStack(spacing: 4) {
@@ -71,12 +68,8 @@ struct MenuBarView: View {
 
             // Open QuickShare window
             Button("Open QuickShare...") {
-                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-                // Fallback: open main window
-                if let window = NSApp.window(withIdentifier: "main") {
-                    window.makeKeyAndOrderFront(nil)
-                    NSApp.activate(ignoringOtherApps: true)
-                }
+                openWindow(id: "main")
+                NSApp.activate(ignoringOtherApps: true)
             }
             .buttonStyle(.plain)
 
