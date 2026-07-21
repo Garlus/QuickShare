@@ -1,0 +1,63 @@
+syntax = "proto2";
+
+package securemessage;
+
+option optimize_for = LITE_RUNTIME;
+
+message SecureMessage {
+  required bytes header_and_body = 1;
+  required bytes signature = 2;
+}
+
+enum SigScheme {
+  HMAC_SHA256 = 1;
+  ECDSA_P256_SHA256 = 2;
+  RSA2048_SHA256 = 3;
+}
+
+enum EncScheme {
+  NONE = 1;
+  AES_256_CBC = 2;
+}
+
+message Header {
+  required SigScheme signature_scheme = 1;
+  required EncScheme encryption_scheme = 2;
+  optional bytes verification_key_id = 3;
+  optional bytes decryption_key_id = 4;
+  optional bytes iv = 5;
+  optional bytes public_metadata = 6;
+  optional uint32 associated_data_length = 7 [default = 0];
+}
+
+message HeaderAndBody {
+  required Header header = 1;
+  required bytes body = 2;
+}
+
+enum PublicKeyType {
+  EC_P256 = 1;
+  RSA2048 = 2;
+  DH2048_MODP = 3;
+}
+
+message EcP256PublicKey {
+  required bytes x = 1;
+  required bytes y = 2;
+}
+
+message SimpleRsaPublicKey {
+  required bytes n = 1;
+  optional int32 e = 2 [default = 65537];
+}
+
+message DhPublicKey {
+  required bytes y = 1;
+}
+
+message GenericPublicKey {
+  required PublicKeyType type = 1;
+  optional EcP256PublicKey ec_p256_public_key = 2;
+  optional SimpleRsaPublicKey rsa2048_public_key = 3;
+  optional DhPublicKey dh2048_public_key = 4;
+}

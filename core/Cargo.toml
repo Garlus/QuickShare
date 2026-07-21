@@ -12,15 +12,28 @@ mdns-sd = "0.13"
 tokio = { version = "1", features = ["full"] }
 anyhow = "1"
 tracing = "0.1"
-tracing-subscriber = "0.3"
-aes-gcm = "0.10"
-blake3 = "1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 mime_guess2 = "2"
 prost = "0.13"
 rand = "0.8"
-x25519-dalek = "2.0"
 libc = "0.2"
+parking_lot = "0.12"
+uuid = { version = "1", features = ["v4"] }
+base64 = "0.22"
+get_if_addrs = "0.5"
+hostname = "0.4"
+futures = "0.3"
+
+# Crypto — UKEY2 compatible with Google QuickShare
+p256 = { version = "0.13", features = ["ecdh", "ecdsa"] }
+hkdf = "0.12"
+hmac = "0.12"
+sha2 = "0.10"
+aes = "0.8"
+cbc = { version = "0.1", features = ["alloc"] }
+hex = "0.4"
+num-bigint = "0.4"
+getrandom = "0.2"
 
 [build-dependencies]
 prost-build = "0.13"
-

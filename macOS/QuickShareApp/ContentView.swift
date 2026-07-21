@@ -10,22 +10,25 @@ struct ContentView: View {
     @State private var showDevicePicker: Bool = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            ZStack {
-                VStack(spacing: 12) {
-                    Image(systemName: "square.and.arrow.up")
-                        .font(.system(size: 32))
-                        .foregroundColor(isDragging ? .accentColor : .primary.opacity(0.75))
-                        .scaleEffect(isDragging ? 1.1 : 1.0)
-                        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isDragging)
+        ZStack {
+            // Background layer — fills entire window
+            ProceduralBackgroundView(dragIntensity: isDragging, purpleMode: !model.isActive)
+                .ignoresSafeArea()
 
-                    Text(isDragging ? "Drop here!" : "Drop to send")
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundColor(isDragging ? .accentColor : .secondary)
-                }
+            // Content layer
+            VStack(spacing: 0) {
+                Spacer()
+
+                Image(systemName: "square.and.arrow.up")
+                    .font(.system(size: 32))
+                    .foregroundColor(isDragging ? .accentColor : .secondary)
+
+                Text(isDragging ? "Drop here!" : "Drop to send")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundColor(isDragging ? .accentColor : .secondary)
+
+                Spacer()
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 24)
             .onDrop(of: [.fileURL], isTargeted: $isDragging) { providers in
                 let group = DispatchGroup()
                 var urls: [URL] = []
@@ -49,20 +52,14 @@ struct ContentView: View {
                 return true
             }
         }
-        .background {
-            if model.isActive {
-                ProceduralBackgroundView(dragIntensity: isDragging)
-                    .ignoresSafeArea()
-            } else {
-                Color(.windowBackgroundColor)
-            }
-        }
         .toolbar {
             ToolbarItemGroup(placement: .principal) {
-                SingleSelectionSegmentedControl(
-                    ["Send", "Send and Recieve"],
-                    selection: $model.isActive
-                )
+                Picker("Mode", selection: $model.isActive) {
+                    Text("Recieve off").tag(false)
+                    Text("Recieve on").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 180)
             }
 
             ToolbarItem(placement: .automatic) {

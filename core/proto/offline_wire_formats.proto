@@ -1,0 +1,160 @@
+syntax = "proto2";
+
+package location.nearby.connections;
+
+option optimize_for = LITE_RUNTIME;
+
+message OfflineFrame {
+  enum Version {
+    UNKNOWN_VERSION = 0;
+    V1 = 1;
+  }
+  optional Version version = 1;
+  optional V1Frame v1 = 2;
+}
+
+message V1Frame {
+  enum FrameType {
+    UNKNOWN_FRAME_TYPE = 0;
+    CONNECTION_REQUEST = 1;
+    CONNECTION_RESPONSE = 2;
+    PAYLOAD_TRANSFER = 3;
+    BANDWIDTH_UPGRADE_NEGOTIATION = 4;
+    KEEP_ALIVE = 5;
+    DISCONNECTION = 6;
+    PAIRED_KEY_ENCRYPTION = 7;
+  }
+  optional FrameType type = 1;
+
+  optional ConnectionRequestFrame connection_request = 2;
+  optional ConnectionResponseFrame connection_response = 3;
+  optional PayloadTransferFrame payload_transfer = 4;
+  optional KeepAliveFrame keep_alive = 6;
+  optional DisconnectionFrame disconnection = 7;
+  optional PairedKeyEncryptionFrame paired_key_encryption = 8;
+}
+
+message ConnectionRequestFrame {
+  enum Medium {
+    UNKNOWN_MEDIUM = 0;
+    MDNS = 1 [deprecated = true];
+    BLUETOOTH = 2;
+    WIFI_HOTSPOT = 3;
+    BLE = 4;
+    WIFI_LAN = 5;
+    WIFI_AWARE = 6;
+    NFC = 7;
+    WIFI_DIRECT = 8;
+    WEB_RTC = 9;
+    BLE_L2CAP = 10;
+    USB = 11;
+  }
+
+  optional string endpoint_id = 1;
+  optional bytes endpoint_name = 2;
+  optional bytes handshake_data = 3;
+  optional int32 nonce = 4;
+  repeated Medium mediums = 5;
+  optional bytes endpoint_info = 6;
+  optional MediumMetadata medium_metadata = 7;
+  optional int32 keep_alive_interval_millis = 8;
+  optional int32 keep_alive_timeout_millis = 9;
+  optional int32 device_type = 10 [default = 0];
+  optional bytes device_info = 11;
+}
+
+message ConnectionResponseFrame {
+  optional int32 status = 1 [deprecated = true];
+  optional bytes handshake_data = 2;
+
+  enum ResponseStatus {
+    UNKNOWN_RESPONSE_STATUS = 0;
+    ACCEPT = 1;
+    REJECT = 2;
+  }
+  optional ResponseStatus response = 3;
+  optional OsInfo os_info = 4;
+  optional int32 multiplex_socket_bitmask = 5;
+  optional int32 nearby_connections_version = 6;
+}
+
+message PayloadTransferFrame {
+  enum PacketType {
+    UNKNOWN_PACKET_TYPE = 0;
+    DATA = 1;
+    CONTROL = 2;
+  }
+
+  message PayloadHeader {
+    enum PayloadType {
+      UNKNOWN_PAYLOAD_TYPE = 0;
+      BYTES = 1;
+      FILE = 2;
+      STREAM = 3;
+    }
+    optional int64 id = 1;
+    optional PayloadType type = 2;
+    optional int64 total_size = 3;
+    optional bool is_sensitive = 4;
+    optional string file_name = 5;
+    optional string parent_folder = 6;
+  }
+
+  message PayloadChunk {
+    optional int32 flags = 1;
+    optional int64 offset = 2;
+    optional bytes body = 3;
+  }
+
+  message ControlMessage {
+    enum EventType {
+      UNKNOWN_EVENT_TYPE = 0;
+      PAYLOAD_ERROR = 1;
+      PAYLOAD_CANCELED = 2;
+      PAYLOAD_RECEIVED_ACK = 3;
+    }
+
+    optional EventType event = 1;
+    optional int64 offset = 2;
+  }
+
+  optional PacketType packet_type = 1;
+  optional PayloadHeader payload_header = 2;
+  optional PayloadChunk payload_chunk = 3;
+  optional ControlMessage control_message = 4;
+}
+
+message KeepAliveFrame {
+  optional bool ack = 1;
+}
+
+message DisconnectionFrame {
+  optional bool request_safe_to_disconnect = 1;
+  optional bool ack_safe_to_disconnect = 2;
+}
+
+message PairedKeyEncryptionFrame {
+  optional bytes signed_data = 1;
+}
+
+message MediumMetadata {
+  optional bool supports_5_ghz = 1;
+  optional string bssid = 2;
+  optional bytes ip_address = 3;
+  optional bool supports_6_ghz = 4;
+  optional bool mobile_radio = 5;
+  optional int32 ap_frequency = 6 [default = -1];
+}
+
+message OsInfo {
+  enum OsType {
+    UNKNOWN_OS_TYPE = 0;
+    ANDROID = 1;
+    CHROME_OS = 2;
+    WINDOWS = 3;
+    APPLE = 4;
+    LINUX = 100;
+  }
+
+  optional OsType type = 1;
+}

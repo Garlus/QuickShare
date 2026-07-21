@@ -1,108 +1,122 @@
-use crate::protocol::{FrameType};
+use crate::protocol::*;
 use crate::transfer::connection::Connection;
 use crate::transfer::encryption::CryptoContext;
+use crate::ffi;
 use anyhow::{Result, anyhow};
 use std::path::PathBuf;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 use tracing::{info, warn};
 
-
 pub struct FileReceiver {
     connection: Connection,
+    #[allow(dead_code)]
     crypto: CryptoContext,
     save_dir: PathBuf,
+    device_name: String,
+    file_number: i32,
 }
 
 impl FileReceiver {
-    pub fn new(connection: Connection, crypto: CryptoContext, save_dir: PathBuf) -> Self {
-        FileReceiver { connection, crypto, save_dir }
+    pub fn new(connection: Connection, crypto: CryptoContext, save_dir: PathBuf, device_name: String, file_number: i32) -> Self {
+        FileReceiver { connection, crypto, save_dir, device_name, file_number }
     }
 
-    /// Listen for an incoming file transfer and save it.
     pub async fn receive_file(&mut self) -> Result<()> {
-        // Wait for payload transfer header
-        let (frame, _) = self.connection.recv_frame().await?;
-        let v1 = frame.v1.as_ref()
-            .ok_or_else(|| anyhow!("Missing V1 frame"))?;
+        // 1. Receive Introduction frame (sharing layer, via SecureMessage)
+        let intro_frame: SharingFrame = self.connection.recv_secure().await?;
+        let v1 = intro_frame.v1.as_ref()
+            .ok_or_else(|| anyhow!("Introduction missing v1"))?;
 
-        match v1.r#type {
-            Some(t) if t == FrameType::PayloadTransfer as i32 => {
-                let transfer = v1.payload_transfer.as_ref()
-                    .ok_or_else(|| anyhow!("Missing payload transfer"))?;
+        let file_meta = v1.introduction.as_ref()
+            .and_then(|i| i.file_metadata.first())
+            .ok_or_else(|| anyhow!("No file metadata in Introduction"))?;
 
-                let file_info = transfer.file_info.as_ref()
-                    .ok_or_else(|| anyhow!("Missing file info"))?;
+        let file_name = file_meta.name.as_deref()
+            .ok_or_else(|| anyhow!("Missing file name"))?;
+        let file_size = file_meta.size
+            .ok_or_else(|| anyhow!("Missing file size"))?;
+        let _payload_id = file_meta.payload_id.unwrap_or(0);
 
-                let file_name = file_info.file_name.as_deref()
-                    .ok_or_else(|| anyhow!("Missing file name"))?;
-                let file_size = file_info.file_size
-                    .ok_or_else(|| anyhow!("Missing file size"))?;
-                let _payload_id = transfer.payload_id.as_ref()
-                    .ok_or_else(|| anyhow!("Missing payload ID"))?;
+        info!("Incoming file: {} ({} bytes) from {}", file_name, file_size, self.device_name);
 
-                let save_path = self.save_dir.join(file_name);
-                info!("Receiving file: {} ({} bytes) -> {:?}", file_name, file_size, save_path);
+        // 2. Ask user to accept
+        let (_request_id, rx) = ffi::register_incoming_transfer(
+            &self.device_name,
+            file_name,
+            file_size,
+            self.file_number,
+        );
+        let accepted = rx.await.unwrap_or(false);
+        if !accepted {
+            warn!("User denied file transfer from {}", self.device_name);
+            // Send PairedKeyResult with REJECT
+            let reject = SharingFrame::new_paired_key_result(PairedKeyResultStatus::Fail);
+            self.connection.send_secure(&reject).await.ok();
+            return Err(anyhow!("Transfer denied by user"));
+        }
 
-                let mut file = File::create(&save_path).await
-                    .map_err(|e| anyhow!("Failed to create file {:?}: {}", save_path, e))?;
+        // 3. Receive PairedKeyEncryption (we don't verify it, just consume it)
+        let _paired_enc: SharingFrame = self.connection.recv_secure().await?;
+        info!("Received PairedKeyEncryption");
 
-                let mut received: i64 = 0;
-                let mut file_buffer = Vec::new();
+        // 4. Send PairedKeyResult (UNABLE — no Google certs)
+        let result = SharingFrame::new_paired_key_result(PairedKeyResultStatus::Unable);
+        self.connection.send_secure(&result).await?;
+        info!("Sent PairedKeyResult (UNABLE)");
 
-                loop {
-                    if received >= file_size {
-                        break;
-                    }
+        // 5. Receive PayloadTransfer header (OfflineFrame via SecureMessage)
+        let transfer_frame: OfflineFrame = self.connection.recv_secure().await?;
+        let transfer_v1 = transfer_frame.v1.as_ref()
+            .ok_or_else(|| anyhow!("PayloadTransfer missing v1"))?;
+        let transfer = transfer_v1.payload_transfer.as_ref()
+            .ok_or_else(|| anyhow!("Missing payload_transfer"))?;
+        let _header = transfer.payload_header.as_ref()
+            .ok_or_else(|| anyhow!("Missing payload_header"))?;
 
-                    let (chunk_frame, _) = self.connection.recv_frame().await?;
-                    let chunk_v1 = chunk_frame.v1.as_ref()
-                        .ok_or_else(|| anyhow!("Missing V1 in chunk"))?;
+        info!("Receiving file: {} ({} bytes)", file_name, file_size);
 
-                    match chunk_v1.r#type {
-                        Some(t) if t == FrameType::PayloadChunk as i32 => {
-                            let chunk = chunk_v1.payload_chunk.as_ref()
-                                .ok_or_else(|| anyhow!("Missing payload chunk"))?;
+        let save_path = self.save_dir.join(file_name);
+        let mut file = File::create(&save_path).await
+            .map_err(|e| anyhow!("Failed to create file {:?}: {}", save_path, e))?;
 
-                            let chunk_data = chunk.chunk.as_ref()
-                                .ok_or_else(|| anyhow!("Missing chunk data"))?;
+        let mut received: i64 = 0;
 
-                            // First 12 bytes are the nonce, rest is ciphertext
-                            if chunk_data.len() < 12 {
-                                return Err(anyhow!("Chunk too small"));
-                            }
-                            let nonce = &chunk_data[..12];
-                            let ciphertext = &chunk_data[12..];
+        // 6. Receive PayloadChunk frames until file is complete
+        loop {
+            if received >= file_size {
+                break;
+            }
 
-                            let plaintext = self.crypto.decrypt(nonce, ciphertext).await?;
-                            file_buffer.extend_from_slice(&plaintext);
-                            received += plaintext.len() as i64;
+            let chunk_frame: OfflineFrame = self.connection.recv_secure().await?;
+            let chunk_v1 = chunk_frame.v1.as_ref()
+                .ok_or_else(|| anyhow!("Chunk missing v1"))?;
 
-                            info!("Received {}/{} bytes for {}",
-                                  received, file_size, file_name);
-                        }
-                        Some(t) if t == FrameType::Disconnection as i32 => {
-                            warn!("Remote disconnected mid-transfer");
-                            break;
-                        }
-                        _ => {
-                            warn!("Unexpected frame type during transfer");
-                        }
+            match chunk_v1.r#type {
+                Some(t) if t == OfflineFrameType::PayloadTransfer as i32 => {
+                    let transfer = chunk_v1.payload_transfer.as_ref()
+                        .ok_or_else(|| anyhow!("Missing payload_transfer in chunk"))?;
+
+                    if let Some(chunk) = &transfer.payload_chunk {
+                        let body = chunk.body.as_deref()
+                            .ok_or_else(|| anyhow!("Missing chunk body"))?;
+                        file.write_all(body).await
+                            .map_err(|e| anyhow!("Failed to write chunk: {}", e))?;
+                        received += body.len() as i64;
+                        info!("Received {}/{} bytes for {}", received, file_size, file_name);
                     }
                 }
-
-                file.write_all(&file_buffer).await
-                    .map_err(|e| anyhow!("Failed to write file: {}", e))?;
-
-                info!("File received: {} ({} bytes)", file_name, received);
-                Ok(())
-            }
-            Some(t) if t == FrameType::Disconnection as i32 => {
-                Err(anyhow!("Remote disconnected"))
-            }
-            _ => {
-                Err(anyhow!("Expected payload transfer frame"))
+                Some(t) if t == OfflineFrameType::Disconnection as i32 => {
+                    warn!("Remote disconnected mid-transfer");
+                    break;
+                }
+                _ => {
+                    warn!("Unexpected frame type during transfer");
+                }
             }
         }
+
+        info!("File received: {} ({} bytes)", file_name, received);
+        Ok(())
     }
 }

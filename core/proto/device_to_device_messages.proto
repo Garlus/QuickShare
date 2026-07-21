@@ -1,0 +1,22 @@
+syntax = "proto2";
+
+package securegcm;
+
+import "securemessage.proto";
+
+option optimize_for = LITE_RUNTIME;
+
+message DeviceToDeviceMessage {
+  optional bytes message = 1;
+  optional int32 sequence_number = 2;
+}
+
+message InitiatorHello {
+  optional securemessage.GenericPublicKey public_dh_key = 1;
+  optional int32 protocol_version = 2 [default = 0];
+}
+
+message ResponderHello {
+  optional securemessage.GenericPublicKey public_dh_key = 1;
+  optional int32 protocol_version = 2 [default = 0];
+}

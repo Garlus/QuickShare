@@ -39,7 +39,7 @@ float fbm(float2 p, int octaves) {
     return value;
 }
 
-// ─── Signed Distance Field für weiche Blobs ─────────────────────
+// ─── Signed Distance Field ──────────────────────────────────────
 
 float sdCircle(float2 p, float2 center, float radius) {
     return length(p - center) - radius;
@@ -80,26 +80,31 @@ fragment float4 fragmentMain(
     VertexOut in [[stage_in]],
     constant float &time [[buffer(0)]],
     constant float2 &resolution [[buffer(1)]],
-    constant float &dragIntensity [[buffer(2)]]
+    constant float &dragIntensity [[buffer(2)]],
+    constant float &purpleMode [[buffer(3)]]
 ) {
     float2 uv = in.uv;
     float2 aspect = float2(resolution.x / resolution.y, 1.0);
     float2 p = uv * aspect;
 
-    float speedMult = 1.0 + dragIntensity * 4.0;
+    float speedMult = 37.0 + dragIntensity * 200.0;
     float energyBoost = dragIntensity;
 
-    // ── 1. Grundfarbe: Fast weiß mit leichtem Verlauf ──────────
-    float3 warmWhite = float3(0.97, 0.98, 1.0);
-    float3 coolWhite = float3(0.94, 0.97, 1.0);
-    float3 dragWarmWhite = float3(0.93, 0.95, 1.0);
-    float3 dragCoolWhite = float3(0.88, 0.93, 1.0);
-    float3 warmW = mix(warmWhite, dragWarmWhite, energyBoost);
-    float3 coolW = mix(coolWhite, dragCoolWhite, energyBoost);
+    // ── 1. Grundfarbe ──────────────────────────────────────────
+    float3 warmWhiteBlue   = float3(0.99, 1.0, 1.0);
+    float3 coolWhiteBlue   = float3(0.96, 0.98, 1.0);
+    float3 warmWhitePurple = float3(1.0, 0.99, 1.0);
+    float3 coolWhitePurple = float3(1.0, 0.96, 0.98);
+    float3 warmW = mix(mix(warmWhiteBlue, warmWhitePurple, purpleMode),
+                       mix(float3(0.96, 0.98, 1.0), float3(1.0, 0.96, 0.98), purpleMode),
+                       energyBoost);
+    float3 coolW = mix(mix(coolWhiteBlue, coolWhitePurple, purpleMode),
+                       mix(float3(0.93, 0.97, 1.0), float3(1.0, 0.93, 0.97), purpleMode),
+                       energyBoost);
     float gradientT = uv.y * 0.3 + uv.x * 0.1;
     float3 bgColor = mix(warmW, coolW, gradientT);
 
-    // ── 2. FBM-Noise für große Farbwolken ──────────────────────
+    // ── 2. FBM-Noise ───────────────────────────────────────────
     float slowTime = time * 0.03 * speedMult;
 
     float cloudNoise1 = fbm(p * 1.5 + float2(slowTime * 0.5, slowTime * 0.3), 4);
@@ -107,76 +112,90 @@ fragment float4 fragmentMain(
     float cloudNoise3 = fbm(p * 0.8 + float2(slowTime * 0.2, slowTime * 0.4), 3);
 
     // ── 3. Farbpalette ─────────────────────────────────────────
-    float3 white     = float3(1.0, 1.0, 1.0);
-    float3 veryLight = mix(float3(0.85, 0.93, 1.0), float3(0.75, 0.88, 1.0), energyBoost);
-    float3 lightBlue = mix(float3(0.65, 0.85, 1.0), float3(0.45, 0.75, 1.0), energyBoost);
-    float3 cyan      = mix(float3(0.1, 0.75, 1.0), float3(0.0, 0.65, 1.0), energyBoost);
-    float3 blue      = mix(float3(0.0, 0.4, 1.0), float3(0.0, 0.3, 1.0), energyBoost);
+    float3 white = float3(1.0, 1.0, 1.0);
 
-    // ── 4. Weiche Farbwolken (additive Mischung) ───────────────
+    // Blue: #EEF8FF → #D7F1FF → #66D9FF → #2F8DFF
+    // Pink: #FFF0F8 → #FFCBE7 → #FF5EB5 → #D5008F
+    float3 veryLightBase   = mix(float3(0.933, 0.973, 1.0), float3(1.0, 0.941, 0.973), purpleMode);
+    float3 veryLightDrag   = mix(float3(0.70, 0.88, 1.0), float3(1.0, 0.80, 0.90), purpleMode);
+    float3 veryLight = mix(veryLightBase, veryLightDrag, energyBoost);
+
+    float3 lightSecBase    = mix(float3(0.843, 0.945, 1.0), float3(1.0, 0.796, 0.906), purpleMode);
+    float3 lightSecDrag    = mix(float3(0.50, 0.80, 1.0), float3(1.0, 0.55, 0.78), purpleMode);
+    float3 lightSecondary  = mix(lightSecBase, lightSecDrag, energyBoost);
+
+    float3 accentBase      = mix(float3(0.4, 0.851, 1.0), float3(1.0, 0.369, 0.710), purpleMode);
+    float3 accentDrag      = mix(float3(0.15, 0.65, 1.0), float3(1.0, 0.15, 0.55), purpleMode);
+    float3 accent          = mix(accentBase, accentDrag, energyBoost);
+
+    float3 deepBase        = mix(float3(0.184, 0.553, 1.0), float3(0.835, 0.0, 0.561), purpleMode);
+    float3 deepDrag        = mix(float3(0.05, 0.30, 1.0), float3(0.70, 0.0, 0.40), purpleMode);
+    float3 deep            = mix(deepBase, deepDrag, energyBoost);
+
+    // ── 4. Weiche Farbwolken ───────────────────────────────────
     float3 col = bgColor;
 
     float cloudMask1 = smoothstep(0.3, 0.7, cloudNoise1);
-    col = mix(col, veryLight, cloudMask1 * (0.5 + energyBoost * 0.3));
+    col = mix(col, veryLight, cloudMask1 * (0.7 + energyBoost * 0.3));
 
     float cloudMask2 = smoothstep(0.35, 0.65, cloudNoise2);
-    col = mix(col, lightBlue, cloudMask2 * (0.45 + energyBoost * 0.3));
+    col = mix(col, lightSecondary, cloudMask2 * (0.65 + energyBoost * 0.3));
 
     float cloudMask3 = smoothstep(0.4, 0.6, cloudNoise3);
-    col = mix(col, cyan, cloudMask3 * (0.25 + energyBoost * 0.35));
+    col = mix(col, accent, cloudMask3 * (0.4 + energyBoost * 0.35));
 
     // ── 5. Blob-Masken (SDF) ───────────────────────────────────
     float blobTime = time * 0.02 * speedMult;
-
     float blobWobble = 0.05 + energyBoost * 0.06;
 
     float2 b1c = float2(0.25, 0.75) * aspect
                + float2(sin(blobTime) * blobWobble, cos(blobTime * 0.7) * blobWobble * 0.6);
     float b1 = sdEllipse(p, b1c, float2(0.35, 0.25) * aspect);
     float b1m = 1.0 - smoothstep(-0.3, 0.5, b1);
-    col = mix(col, lightBlue, b1m * (0.35 + energyBoost * 0.25));
-    col = mix(col, cyan, b1m * (0.2 + energyBoost * 0.2));
+    col = mix(col, lightSecondary, b1m * (0.55 + energyBoost * 0.25));
+    col = mix(col, accent, b1m * (0.35 + energyBoost * 0.2));
 
     float2 b2c = float2(0.75, 0.55) * aspect
                + float2(cos(blobTime * 0.8) * blobWobble * 0.8, sin(blobTime * 0.6) * blobWobble);
     float b2 = sdEllipse(p, b2c, float2(0.3, 0.2) * aspect);
     float b2m = 1.0 - smoothstep(-0.25, 0.4, b2);
-    col = mix(col, veryLight, b2m * (0.3 + energyBoost * 0.2));
-    col = mix(col, lightBlue, b2m * (0.15 + energyBoost * 0.15));
+    col = mix(col, veryLight, b2m * (0.5 + energyBoost * 0.2));
+    col = mix(col, lightSecondary, b2m * (0.3 + energyBoost * 0.15));
 
     float2 b3c = float2(0.5, 0.2) * aspect
                + float2(sin(blobTime * 0.5) * blobWobble * 1.2, cos(blobTime * 0.9) * blobWobble * 0.8);
     float b3 = sdCircle(p, b3c, 0.18);
     float b3m = 1.0 - smoothstep(-0.2, 0.3, b3);
-    col = mix(col, cyan, b3m * (0.3 + energyBoost * 0.3));
+    col = mix(col, accent, b3m * (0.5 + energyBoost * 0.3));
 
     float2 b4c = float2(0.85, 0.85) * aspect
                + float2(cos(blobTime * 0.3) * blobWobble * 0.6, sin(blobTime * 0.4) * blobWobble * 0.4);
     float b4 = sdEllipse(p, b4c, float2(0.2, 0.15) * aspect);
     float b4m = 1.0 - smoothstep(-0.15, 0.25, b4);
-    col = mix(col, blue, b4m * (0.12 + energyBoost * 0.18));
+    col = mix(col, deep, b4m * (0.3 + energyBoost * 0.18));
 
     // ── 6. Additive Lichtverläufe ──────────────────────────────
     float diag = dot(normalize(float2(1.0, -1.0)), uv - 0.5) + 0.5;
-    col += white * pow(diag, 2.5) * (0.06 + energyBoost * 0.06);
+    col += white * pow(diag, 2.5) * (0.08 + energyBoost * 0.06);
 
     float rl1 = 1.0 - smoothstep(0.0, 0.6, length(uv - float2(0.35, 0.65)));
-    col += veryLight * rl1 * (0.08 + energyBoost * 0.08);
+    col += veryLight * rl1 * (0.12 + energyBoost * 0.08);
 
     float rl2 = 1.0 - smoothstep(0.0, 0.5, length(uv - float2(0.7, 0.3)));
-    col += lightBlue * rl2 * (0.05 + energyBoost * 0.07);
+    col += lightSecondary * rl2 * (0.08 + energyBoost * 0.07);
 
     // ── 6b. Pulsierender Glow beim Drag ────────────────────────
     float pulse = sin(time * 2.0 * speedMult) * 0.5 + 0.5;
     float centerGlow = 1.0 - smoothstep(0.0, 0.7, length(uv - 0.5));
-    col += cyan * centerGlow * energyBoost * 0.12 * pulse;
-    col += lightBlue * centerGlow * energyBoost * 0.08;
+    col += accent * centerGlow * energyBoost * 0.18 * pulse;
+    col += lightSecondary * centerGlow * energyBoost * 0.15;
 
     // ── 7. Halftone-Dot-Muster ─────────────────────────────────
     float dotMask  = (1.0 - smoothstep(0.0, 0.5, uv.y))
                    * smoothstep(0.0, 0.3, uv.y);
     float dots = halftone(uv, 80.0 + energyBoost * 20.0, dotMask);
-    col = mix(col, float3(0.85, 0.92, 0.98), dots * (0.12 + energyBoost * 0.08) * dotMask);
+    float3 dotColor = mix(float3(0.92, 0.96, 1.0), float3(1.0, 0.93, 0.97), purpleMode);
+    col = mix(col, dotColor, dots * (0.12 + energyBoost * 0.08) * dotMask);
 
     // ── 8. Subtile Vignette ────────────────────────────────────
     float vig = vignette(uv, 0.3);
@@ -224,8 +243,10 @@ fileprivate class MetalCoordinator: NSObject, MTKViewDelegate {
     let timeBuffer: MTLBuffer
     let resolutionBuffer: MTLBuffer
     let dragIntensityBuffer: MTLBuffer
+    let purpleModeBuffer: MTLBuffer
     let startTime: Date
     var dragIntensity: Float = 0.0
+    var purpleMode: Float = 0.0
 
     init?(device: MTLDevice) {
         self.device = device
@@ -260,6 +281,7 @@ fileprivate class MetalCoordinator: NSObject, MTKViewDelegate {
         timeBuffer = device.makeBuffer(length: MemoryLayout<Float>.size, options: [])!
         resolutionBuffer = device.makeBuffer(length: MemoryLayout<SIMD2<Float>>.size, options: [])!
         dragIntensityBuffer = device.makeBuffer(length: MemoryLayout<Float>.size, options: [])!
+        purpleModeBuffer = device.makeBuffer(length: MemoryLayout<Float>.size, options: [])!
         startTime = Date()
 
         super.init()
@@ -272,7 +294,14 @@ fileprivate class MetalCoordinator: NSObject, MTKViewDelegate {
 
     func updateDragIntensity(_ value: Float) {
         dragIntensity = value
-        memcpy(dragIntensityBuffer.contents(), &value, MemoryLayout<Float>.size)
+        var v = value
+        memcpy(dragIntensityBuffer.contents(), &v, MemoryLayout<Float>.size)
+    }
+
+    func updatePurpleMode(_ value: Float) {
+        purpleMode = value
+        var v = value
+        memcpy(purpleModeBuffer.contents(), &v, MemoryLayout<Float>.size)
     }
 
     func draw(in view: MTKView) {
@@ -289,6 +318,7 @@ fileprivate class MetalCoordinator: NSObject, MTKViewDelegate {
         enc.setFragmentBuffer(timeBuffer, offset: 0, index: 0)
         enc.setFragmentBuffer(resolutionBuffer, offset: 0, index: 1)
         enc.setFragmentBuffer(dragIntensityBuffer, offset: 0, index: 2)
+        enc.setFragmentBuffer(purpleModeBuffer, offset: 0, index: 3)
         enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
         enc.endEncoding()
 
@@ -301,6 +331,7 @@ fileprivate class MetalCoordinator: NSObject, MTKViewDelegate {
 
 struct ProceduralBackgroundView: NSViewRepresentable {
     var dragIntensity: Bool = false
+    var purpleMode: Bool = false
 
     func makeNSView(context: Context) -> MTKView {
         guard let device = MTLCreateSystemDefaultDevice() else {
@@ -325,14 +356,22 @@ struct ProceduralBackgroundView: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: MTKView, context: Context) {
-        let target: Float = dragIntensity ? 1.0 : 0.0
         guard let coordinator = context.coordinator.storage else { return }
 
-        let current = coordinator.dragIntensity
-        if current != target {
-            let smoothed = current + (target - current) * 0.15
-            let final = abs(smoothed - target) < 0.01 ? target : smoothed
+        let targetDrag: Float = dragIntensity ? 1.0 : 0.0
+        let currentDrag = coordinator.dragIntensity
+        if currentDrag != targetDrag {
+            let smoothed = currentDrag + (targetDrag - currentDrag) * 0.15
+            let final = abs(smoothed - targetDrag) < 0.01 ? targetDrag : smoothed
             coordinator.updateDragIntensity(final)
+        }
+
+        let targetPurple: Float = purpleMode ? 1.0 : 0.0
+        let currentPurple = coordinator.purpleMode
+        if currentPurple != targetPurple {
+            let smoothed = currentPurple + (targetPurple - currentPurple) * 0.15
+            let final = abs(smoothed - targetPurple) < 0.01 ? targetPurple : smoothed
+            coordinator.updatePurpleMode(final)
         }
     }
 

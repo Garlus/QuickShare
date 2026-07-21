@@ -1,99 +1,142 @@
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use anyhow::{Result, Context, anyhow};
-use btleplug::api::{Central, Manager as _, Peripheral as _, ScanFilter};
+use btleplug::api::{Central, CentralEvent, Manager as _, ScanFilter};
 use btleplug::platform::{Manager, Adapter};
-use tokio::sync::Mutex;
-use tracing::{info, warn, error};
+use futures::stream::StreamExt;
+use tokio::sync::{Mutex, mpsc};
+use tokio::time;
+use tracing::{info, warn, debug};
+use uuid::Uuid;
 
-// Google Nearby Share / QuickShare standard 16-bit Service UUID
-pub const NEARBY_SHARE_SERVICE_UUID_16: u16 = 0xFEF3;
+/// Google QuickShare / Nearby Share BLE Service UUID (0xFE2C).
+const QUICKSHARE_SERVICE_UUID: Uuid = Uuid::from_bytes([
+    0x00, 0x00, 0xFE, 0x2C, 0x00, 0x00, 0x10, 0x00,
+    0x80, 0x00, 0x00, 0x80, 0x5F, 0x9B, 0x34, 0xFB,
+]);
+
+/// Minimum interval between BLE notifications to prevent spam.
+const BLE_NOTIFY_INTERVAL: Duration = Duration::from_secs(30);
 
 pub struct BleDiscovery {
     adapter: Option<Adapter>,
     is_scanning: Arc<Mutex<bool>>,
-    is_advertising: Arc<Mutex<bool>>,
 }
 
 impl BleDiscovery {
     pub async fn new() -> Result<Self> {
         let manager = Manager::new().await
             .context("Failed to initialize btleplug BLE Manager")?;
-        
+
         let adapters = manager.adapters().await
             .context("Failed to get Bluetooth adapters")?;
-        
+
         let adapter = adapters.into_iter().next();
         if adapter.is_none() {
-            warn!("No Bluetooth adapters found. BLE discovery and advertising will be disabled.");
+            warn!("No Bluetooth adapters found. BLE discovery will be disabled.");
         } else {
-            info!("Successfully initialized Bluetooth adapter.");
+            info!("Bluetooth adapter initialized successfully.");
         }
 
         Ok(Self {
             adapter,
             is_scanning: Arc::new(Mutex::new(false)),
-            is_advertising: Arc::new(Mutex::new(false)),
         })
     }
 
-    pub async fn start_scanning<F>(&self, on_device_found: F) -> Result<()>
+    pub async fn start_scanning<F>(
+        &self,
+        on_device_found: F,
+        ble_mdns_sender: Option<mpsc::Sender<()>>,
+    ) -> Result<()>
     where
         F: FnMut(String, String, Vec<u8>) + Send + 'static,
     {
         let adapter = self.adapter.as_ref()
             .ok_or_else(|| anyhow!("No Bluetooth adapter available"))?;
-        
+
         let mut scanning = self.is_scanning.lock().await;
         if *scanning {
             return Ok(());
         }
 
-        info!("Starting BLE scanning for QuickShare...");
-        
-        // We can scan with a filter for the Nearby Share Service UUID (0xFEF3)
-        // Note: some platforms require a specific UUID, some don't. We'll listen for everything or filter.
-        adapter.start_scan(ScanFilter::default()).await
-            .context("Failed to start BLE scan")?;
-        
-        *scanning = true;
+        info!("Starting BLE scanning for QuickShare (UUID: 0xFE2C)...");
 
-        // Monitor scan results in a separate task
-        let adapter_clone = adapter.clone();
+        let mut events = adapter.events().await
+            .context("Failed to get BLE event stream")?;
+
+        adapter.start_scan(ScanFilter {
+            services: vec![QUICKSHARE_SERVICE_UUID],
+        }).await
+            .context("Failed to start BLE scan")?;
+
+        *scanning = true;
         let is_scanning_clone = self.is_scanning.clone();
         let mut on_device_found = on_device_found;
+        let mut last_notify = SystemTime::UNIX_EPOCH;
 
         tokio::spawn(async move {
+            info!("BLE event listener started, scanning for QuickShare advertisements...");
+
             while *is_scanning_clone.lock().await {
-                tokio::time::sleep(Duration::from_secs(2)).await;
-                match adapter_clone.peripherals().await {
-                    Ok(peripherals) => {
-                        for peripheral in peripherals {
-                            if let Ok(Some(properties)) = peripheral.properties().await {
-                                // Extract service data matching Nearby Share UUID
-                                for (uuid, data) in &properties.service_data {
-                                    // Check if the UUID matches 0xFEF3 (Nearby Share)
-                                    // UUIDs can be 16-bit, 32-bit or 128-bit.
-                                    let is_nearby = uuid.to_string().contains("fef3") || 
-                                                     uuid.to_string().contains("FEF3");
-                                    
-                                    if is_nearby {
-                                        let name = properties.local_name
-                                            .clone()
-                                            .unwrap_or_else(|| "Unknown QuickShare Device".to_string());
-                                        let id = properties.address.to_string();
-                                        info!("Found QuickShare device via BLE: {} ({}) with data: {:?}", name, id, data);
-                                        on_device_found(id, name, data.clone());
+                tokio::select! {
+                    Some(event) = events.next() => {
+                        match event {
+                            CentralEvent::ServiceDataAdvertisement { id, service_data } => {
+                                if !service_data.contains_key(&QUICKSHARE_SERVICE_UUID) {
+                                    continue;
+                                }
+
+                                let data = service_data.get(&QUICKSHARE_SERVICE_UUID)
+                                    .cloned()
+                                    .unwrap_or_default();
+
+                                info!(
+                                    "BLE QuickShare advertisement: id='{}' data_len={} data={}",
+                                    id, data.len(),
+                                    data.iter().map(|b| format!("{:02X}", b)).collect::<String>()
+                                );
+
+                                let name = format!("BLE-{}", id);
+                                on_device_found(id.to_string(), name, data);
+
+                                if let Some(ref sender) = ble_mdns_sender {
+                                    let now = SystemTime::now();
+                                    if now.duration_since(last_notify).unwrap_or_default() > BLE_NOTIFY_INTERVAL {
+                                        let _ = sender.try_send(());
+                                        last_notify = now;
+                                        info!("Notified mDNS for re-broadcast due to BLE event");
                                     }
                                 }
                             }
+                            CentralEvent::DeviceConnected(id) => {
+                                debug!("BLE DeviceConnected: id='{}'", id);
+                            }
+                            CentralEvent::DeviceDisconnected(id) => {
+                                debug!("BLE DeviceDisconnected: id='{}'", id);
+                            }
+                            CentralEvent::DeviceUpdated(id) => {
+                                debug!("BLE DeviceUpdated: id='{}'", id);
+                            }
+                            CentralEvent::DeviceDiscovered(id) => {
+                                debug!("BLE DeviceDiscovered: id='{}'", id);
+                            }
+                            CentralEvent::ServicesAdvertisement { id, services } => {
+                                debug!("BLE ServicesAdvertisement: id='{}' services={:?}", id, services);
+                            }
+                            CentralEvent::ManufacturerDataAdvertisement { id, manufacturer_data } => {
+                                debug!("BLE ManufacturerDataAdvertisement: id='{}' data={:?}", id, manufacturer_data);
+                            }
+                            CentralEvent::StateUpdate(state) => {
+                                debug!("BLE StateUpdate: {:?}", state);
+                            }
                         }
                     }
-                    Err(e) => {
-                        error!("Error fetching BLE peripherals: {:?}", e);
-                    }
+                    _ = time::sleep(Duration::from_millis(500)) => {}
                 }
             }
+
+            info!("BLE event listener stopped");
         });
 
         Ok(())
@@ -102,7 +145,7 @@ impl BleDiscovery {
     pub async fn stop_scanning(&self) -> Result<()> {
         let adapter = self.adapter.as_ref()
             .ok_or_else(|| anyhow!("No Bluetooth adapter available"))?;
-        
+
         let mut scanning = self.is_scanning.lock().await;
         if !*scanning {
             return Ok(());
@@ -111,48 +154,12 @@ impl BleDiscovery {
         info!("Stopping BLE scanning...");
         adapter.stop_scan().await
             .context("Failed to stop BLE scan")?;
-        
+
         *scanning = false;
         Ok(())
     }
 
-    pub async fn start_advertising(&self, device_name: &str) -> Result<()> {
-        let _adapter = self.adapter.as_ref()
-            .ok_or_else(|| anyhow!("No Bluetooth adapter available"))?;
-        
-        let mut advertising = self.is_advertising.lock().await;
-        if *advertising {
-            return Ok(());
-        }
-
-        info!("Starting BLE advertising as '{}'...", device_name);
-        
-        // Note: btleplug peripheral role is supported on macOS and Linux (BlueZ).
-        // It allows creating a GATT server or advertising custom service data.
-        // Google Nearby Share advertising payload format:
-        // Byte 0: Version (usually 0x01)
-        // Byte 1: Device Type & visibility
-        // Byte 2..: Salt & private credentials hash
-        
-        // For a prototype, we build a compatible-like payload or custom metadata
-        // In full Nearby Share, the advertisement contains the decrypted certificate verification metadata
-        
-        // TODO: Implement proper advertising payload format
-        
-        *advertising = true;
-        Ok(())
-    }
-
-    pub async fn stop_advertising(&self) -> Result<()> {
-        let mut advertising = self.is_advertising.lock().await;
-        if !*advertising {
-            return Ok(());
-        }
-
-        info!("Stopping BLE advertising...");
-        // TODO: Implement stop peripheral advertising via btleplug
-        
-        *advertising = false;
-        Ok(())
+    pub async fn is_scanning(&self) -> bool {
+        *self.is_scanning.lock().await
     }
 }

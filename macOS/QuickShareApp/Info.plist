@@ -26,7 +26,7 @@
     <string>QuickShare uses the local network to transfer files between devices.</string>
     <key>NSBonjourServices</key>
     <array>
-        <string>_quickshare._tcp</string>
+        <string>_FC9F5ED42C8A._tcp</string>
     </array>
     <key>NSSystemExtensionUsageDescription</key>
     <string>QuickShare needs a background daemon to receive files.</string>

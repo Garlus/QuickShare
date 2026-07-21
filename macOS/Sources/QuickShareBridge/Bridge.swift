@@ -21,10 +21,10 @@ public class QuickShare: @unchecked Sendable {
     }
 
     public enum DeviceType: Int32 {
-        case phone = 0
-        case tablet = 1
-        case laptop = 2
-        case desktop = 3
+        case unknown = 0
+        case phone = 1
+        case tablet = 2
+        case laptop = 3
     }
 
     public struct DiscoveredDevice {
@@ -41,25 +41,39 @@ public class QuickShare: @unchecked Sendable {
         public let bytesTotal: Int64
     }
 
+    public struct IncomingTransferRequest {
+        public let requestId: String
+        public let deviceName: String
+        public let fileName: String
+        public let fileSize: Int64
+        public let fileNumber: Int32
+    }
+
     private let ctx: OpaquePointer
     private let deviceFoundHandler: ((DiscoveredDevice) -> Void)?
     private let transferHandler: ((TransferProgress) -> Void)?
+    private let incomingTransferHandler: ((IncomingTransferRequest) -> Void)?
 
     public init(
         deviceName: String = "QuickShare Desktop",
         onDeviceFound: ((DiscoveredDevice) -> Void)? = nil,
-        onTransfer: ((TransferProgress) -> Void)? = nil
+        onTransfer: ((TransferProgress) -> Void)? = nil,
+        onIncomingTransfer: ((IncomingTransferRequest) -> Void)? = nil
     ) {
         self.deviceFoundHandler = onDeviceFound
         self.transferHandler = onTransfer
+        self.incomingTransferHandler = onIncomingTransfer
 
         let userData = Unmanaged.passRetained(QuickShareCallbackContext(
             onDeviceFound: onDeviceFound,
-            onTransfer: onTransfer
+            onTransfer: onTransfer,
+            onIncomingTransfer: onIncomingTransfer
         )).toOpaque()
 
         let namePtr = (deviceName as NSString).utf8String
-        self.ctx = qs_init(namePtr, nil)!
+
+        // Pass a log callback so Rust logs appear in Xcode console
+        self.ctx = qs_init(namePtr, rustLogCallback, userData)!
 
         if onDeviceFound != nil {
             qs_set_device_found_callback(ctx, deviceFoundCallback, userData)
@@ -67,6 +81,10 @@ public class QuickShare: @unchecked Sendable {
 
         if onTransfer != nil {
             qs_set_transfer_callback(ctx, transferCallback, userData)
+        }
+
+        if onIncomingTransfer != nil {
+            qs_set_incoming_transfer_callback(ctx, incomingTransferCallback, userData)
         }
     }
 
@@ -76,7 +94,7 @@ public class QuickShare: @unchecked Sendable {
 
     // MARK: - Public API
 
-    public func startAdvertising(deviceType: DeviceType = .desktop) -> Bool {
+    public func startAdvertising(deviceType: DeviceType = .laptop) -> Bool {
         qs_start_advertising(ctx, deviceType.rawValue) == 0
     }
 
@@ -90,6 +108,18 @@ public class QuickShare: @unchecked Sendable {
 
     public func stopDiscovery() -> Bool {
         qs_stop_discovery(ctx) == 0
+    }
+
+    public func acceptTransfer(requestId: String) -> Bool {
+        requestId.withCString { ptr in
+            qs_accept_transfer(ptr) == 0
+        }
+    }
+
+    public func denyTransfer(requestId: String) -> Bool {
+        requestId.withCString { ptr in
+            qs_deny_transfer(ptr) == 0
+        }
     }
 
     public var isAdvertising: Bool {
@@ -106,6 +136,13 @@ public class QuickShare: @unchecked Sendable {
 }
 
 // MARK: - C Callback Trampolines
+
+private let rustLogCallback: qs_log_cb_t = { level, message, userData in
+    guard let message = message else { return }
+    let msg = String(cString: message)
+    let prefix = level <= 1 ? "🔴 ERROR" : level == 2 ? "🟡 WARN" : "🔵 INFO"
+    NSLog("[Rust] \(prefix): \(msg)")
+}
 
 private let deviceFoundCallback: qs_device_found_cb_t = { deviceId, deviceName, connType, userData in
     guard let userData = userData else { return }
@@ -135,17 +172,37 @@ private let transferCallback: qs_transfer_cb_t = { transferId, deviceId, status,
     ))
 }
 
+private let incomingTransferCallback: qs_incoming_transfer_cb_t = { requestId, deviceName, fileName, fileSize, fileNumber, userData in
+    guard let userData = userData else { return }
+    let context = Unmanaged<QuickShareCallbackContext>.fromOpaque(userData).takeUnretainedValue()
+
+    let reqId = requestId.map { String(cString: $0) } ?? ""
+    let devName = deviceName.map { String(cString: $0) } ?? ""
+    let fName = fileName.map { String(cString: $0) } ?? ""
+
+    context.onIncomingTransfer?(QuickShare.IncomingTransferRequest(
+        requestId: reqId,
+        deviceName: devName,
+        fileName: fName,
+        fileSize: fileSize,
+        fileNumber: fileNumber
+    ))
+}
+
 // MARK: - Callback Context
 
 private class QuickShareCallbackContext {
     let onDeviceFound: ((QuickShare.DiscoveredDevice) -> Void)?
     let onTransfer: ((QuickShare.TransferProgress) -> Void)?
+    let onIncomingTransfer: ((QuickShare.IncomingTransferRequest) -> Void)?
 
     init(
         onDeviceFound: ((QuickShare.DiscoveredDevice) -> Void)?,
-        onTransfer: ((QuickShare.TransferProgress) -> Void)?
+        onTransfer: ((QuickShare.TransferProgress) -> Void)?,
+        onIncomingTransfer: ((QuickShare.IncomingTransferRequest) -> Void)?
     ) {
         self.onDeviceFound = onDeviceFound
         self.onTransfer = onTransfer
+        self.onIncomingTransfer = onIncomingTransfer
     }
 }

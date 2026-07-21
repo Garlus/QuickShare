@@ -42,6 +42,8 @@ targets:
           - "SystemConfiguration"
           - "-framework"
           - "IOKit"
+          - "-framework"
+          - "Network"
     dependencies:
       - target: ShareExtension
     preBuildScripts:

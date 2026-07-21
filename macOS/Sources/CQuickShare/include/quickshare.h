@@ -23,8 +23,15 @@ typedef void (*qs_log_cb_t)(int level,
                              const char* message,
                              void* user_data);
 
+typedef void (*qs_incoming_transfer_cb_t)(const char* request_id,
+                                           const char* device_name,
+                                           const char* file_name,
+                                           int64_t file_size,
+                                           int file_number,
+                                           void* user_data);
+
 // Lifecycle
-QsContext* qs_init(const char* device_name, qs_log_cb_t log_cb);
+QsContext* qs_init(const char* device_name, qs_log_cb_t log_cb, void* log_user_data);
 void qs_shutdown(QsContext* ctx);
 
 // Callbacks
@@ -35,6 +42,14 @@ void qs_set_device_found_callback(QsContext* ctx,
 void qs_set_transfer_callback(QsContext* ctx,
                                qs_transfer_cb_t cb,
                                void* user_data);
+
+void qs_set_incoming_transfer_callback(QsContext* ctx,
+                                        qs_incoming_transfer_cb_t cb,
+                                        void* user_data);
+
+// Incoming transfer accept/deny
+int qs_accept_transfer(const char* request_id);
+int qs_deny_transfer(const char* request_id);
 
 // Discovery
 int qs_start_advertising(QsContext* ctx, int device_type);
