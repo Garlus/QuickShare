@@ -5,8 +5,7 @@ import Observation
 class QuickShareModel {
     var isActive: Bool = false {
         didSet {
-            if isActive { startCore() }
-            else { stopCore() }
+            updateCoreState()
         }
     }
     var isDiscovering: Bool = false
@@ -15,6 +14,10 @@ class QuickShareModel {
     var transfers: [TransferProgress] = []
 
     private var core: QuickShare?
+
+    init() {
+        startCore()
+    }
 
     struct DiscoveredDevice: Identifiable {
         let id: String
@@ -31,6 +34,7 @@ class QuickShareModel {
     }
 
     private func startCore() {
+        if core != nil { return }
         core = QuickShare(
             deviceName: deviceName,
             onDeviceFound: { [weak self] device in
@@ -49,9 +53,26 @@ class QuickShareModel {
                 }
             }
         )
-        _ = core?.startAdvertising()
         _ = core?.startDiscovery()
         isDiscovering = true
+        
+        if isActive {
+            _ = core?.startAdvertising()
+        } else {
+            _ = core?.stopAdvertising()
+        }
+    }
+
+    private func updateCoreState() {
+        if core == nil {
+            startCore()
+            return
+        }
+        if isActive {
+            _ = core?.startAdvertising()
+        } else {
+            _ = core?.stopAdvertising()
+        }
     }
 
     private func stopCore() {

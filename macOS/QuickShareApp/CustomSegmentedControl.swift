@@ -3,31 +3,42 @@ import SwiftUI
 struct SingleSelectionSegmentedControl: View {
     let segments: [String]
     @Binding var selection: Int
+    @Namespace private var animation
 
     var body: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: 2) {
             ForEach(Array(segments.enumerated()), id: \.offset) { index, title in
-                Button(action: { withAnimation(.easeInOut(duration: 0.2)) { selection = index } }) {
+                Button(action: {
+                    withAnimation(.spring(response: 0.26, dampingFraction: 0.8, blendDuration: 0)) {
+                        selection = index
+                    }
+                }) {
                     Text(title)
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.system(size: 11, weight: .medium))
                         .foregroundColor(selection == index ? .primary : .secondary)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 5)
-                        .background(
-                            Capsule()
-                                .fill(selection == index
-                                      ? Color.primary.opacity(0.12)
-                                      : Color.clear)
-                        )
-                        .contentShape(Capsule())
+                        .background {
+                            if selection == index {
+                                Capsule()
+                                    .fill(.thickMaterial)
+                                    .shadow(color: Color.black.opacity(0.06), radius: 1, x: 0, y: 1)
+                                    .matchedGeometryEffect(id: "active_pill", in: animation)
+                            }
+                        }
                 }
                 .buttonStyle(.plain)
             }
         }
-        .background(
+        .padding(2)
+        .background {
             Capsule()
-                .strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5)
-        )
+                .fill(.ultraThinMaterial)
+        }
+        .overlay {
+            Capsule()
+                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5)
+        }
     }
 }
 

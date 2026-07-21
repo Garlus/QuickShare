@@ -3,22 +3,15 @@ import UniformTypeIdentifiers
 
 struct ContentView: View {
     @Bindable var model: QuickShareModel
+    @Environment(\.openSettings) private var openSettings
     @State private var isDragging: Bool = false
-    @State private var showSettings: Bool = false
+
     @State private var droppedFiles: [URL] = []
     @State private var showDevicePicker: Bool = false
 
     var body: some View {
         VStack(spacing: 0) {
             ZStack {
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(isDragging ? Color.accentColor.opacity(0.05) : Color.clear)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16)
-                            .strokeBorder(isDragging ? Color.accentColor : Color.clear, style: StrokeStyle(lineWidth: 2, dash: [6]))
-                    )
-                    .animation(.easeInOut(duration: 0.2), value: isDragging)
-
                 VStack(spacing: 12) {
                     Image(systemName: "square.and.arrow.up")
                         .font(.system(size: 32))
@@ -58,7 +51,7 @@ struct ContentView: View {
         }
         .background {
             if model.isActive {
-                ProceduralBackgroundView()
+                ProceduralBackgroundView(dragIntensity: isDragging)
                     .ignoresSafeArea()
             } else {
                 Color(.windowBackgroundColor)
@@ -67,48 +60,22 @@ struct ContentView: View {
         .toolbar {
             ToolbarItemGroup(placement: .principal) {
                 SingleSelectionSegmentedControl(
-                    ["Off", "Share and Receive"],
+                    ["Send", "Send and Recieve"],
                     selection: $model.isActive
                 )
             }
 
             ToolbarItem(placement: .automatic) {
-                Button(action: { showSettings = true }) {
+                Button(action: { openSettings() }) {
                     Image(systemName: "gearshape")
                         .font(.system(size: 14))
                         .foregroundColor(.primary.opacity(0.8))
                 }
             }
         }
-        .sheet(isPresented: $showSettings) {
-            SettingsSheetView(model: model, isPresented: $showSettings)
-        }
         .sheet(isPresented: $showDevicePicker) {
             DevicePickerSheetView(model: model, files: droppedFiles, isPresented: $showDevicePicker)
         }
-    }
-}
-
-// MARK: - Settings Sheet View
-
-struct SettingsSheetView: View {
-    @Bindable var model: QuickShareModel
-    @Binding var isPresented: Bool
-
-    var body: some View {
-        NavigationStack {
-            SettingsView(model: model)
-                .navigationTitle("Settings")
-
-                .toolbar {
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Done") {
-                            isPresented = false
-                        }
-                    }
-                }
-        }
-        .frame(width: 420, height: 340)
     }
 }
 
@@ -189,9 +156,6 @@ struct DevicePickerSheetView: View {
         }
         .frame(width: 360, height: 280)
         .onAppear {
-            if !model.isActive {
-                model.isActive = true
-            }
             model.startDiscovery()
         }
     }
