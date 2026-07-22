@@ -91,8 +91,7 @@ impl Connection {
             3 => DeviceType::Laptop,
             _ => DeviceType::Laptop,
         };
-        let endpoint_info = crate::discovery::utils::gen_mdns_endpoint_info(dt, device_name)
-            .into_bytes();
+        let endpoint_info = crate::discovery::utils::gen_raw_endpoint_info(dt, device_name);
 
         let conn_req = OfflineFrame::new_connection_request(
             endpoint_id.to_string(),
@@ -246,12 +245,11 @@ impl Connection {
 
         // Step 5: Verify the ClientFinish commitment
         let received_commitment = Sha512::digest(&finish_data);
-        if let Some(expected_commitment) = client_init.cipher_commitments.first()
+        let expected_commitment = client_init.cipher_commitments.first()
             .and_then(|c| c.commitment.as_ref())
-        {
-            if received_commitment.as_slice() != expected_commitment.as_slice() {
-                return Err(anyhow!("ClientFinish commitment mismatch"));
-            }
+            .ok_or_else(|| anyhow!("Missing cipher_commitment in ClientInit"))?;
+        if received_commitment.as_slice() != expected_commitment.as_slice() {
+            return Err(anyhow!("ClientFinish commitment mismatch"));
         }
 
         // Step 6: ECDH key exchange

@@ -1,9 +1,14 @@
-use crate::discovery::{BleDiscovery, MdnsDiscovery, utils::DeviceType};
+use crate::discovery::BleDiscovery;
 use crate::init_logging;
+use crate::transfer::connection::{Connection, ConnectionListener, DEFAULT_PORT};
+use crate::transfer::sender::{FileSender, set_progress_callback};
+use crate::transfer::encryption::CryptoContext;
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::runtime::Runtime;
-use tokio::sync::{oneshot, mpsc};
+use tokio::sync::oneshot;
+use tokio::sync::watch;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use parking_lot::Mutex;
@@ -12,11 +17,9 @@ use parking_lot::Mutex;
 pub struct QsContext {
     #[allow(dead_code)]
     ble: Option<BleDiscovery>,
-    mdns: Option<MdnsDiscovery>,
     device_name: String,
     initialized: AtomicBool,
-    /// Sender end of the BLE->mDNS re-broadcast channel.
-    ble_mdns_sender: Option<mpsc::Sender<()>>,
+    endpoint_id: parking_lot::Mutex<Option<[u8; 4]>>,
 }
 
 // === C-compatible callback types ===
@@ -93,6 +96,215 @@ fn get_runtime() -> &'static Runtime {
     RUNTIME.get_or_init(|| Runtime::new().expect("Failed to create Tokio runtime"))
 }
 
+// === Progress callback bridge ===
+
+static CURRENT_TRANSFER_ID: Mutex<Option<String>> = Mutex::new(None);
+static CURRENT_DEVICE_ID: Mutex<Option<String>> = Mutex::new(None);
+
+fn native_progress_callback(sent: i64, total: i64, _file_name: &str) {
+    let tid_guard = CURRENT_TRANSFER_ID.lock();
+    let did_guard = CURRENT_DEVICE_ID.lock();
+    let callbacks = CALLBACKS.lock();
+
+    if let Some((cb, user_data)) = callbacks.transfer {
+        let tid = CString::new(tid_guard.as_deref().unwrap_or("")).unwrap();
+        let did = CString::new(did_guard.as_deref().unwrap_or("")).unwrap();
+        cb(tid.as_ptr(), did.as_ptr(), 1, sent, total, user_data);
+    }
+}
+
+/// Must be called once after qs_init to wire up progress reporting.
+pub fn init_progress_bridge() {
+    let _ = set_progress_callback(native_progress_callback);
+}
+
+// === Listener management ===
+
+static LISTENER_SHUTDOWN: Mutex<Option<watch::Sender<bool>>> = Mutex::new(None);
+
+#[unsafe(no_mangle)]
+pub extern "C" fn qs_start_listener(
+    ctx: *mut QsContext,
+    save_dir: *const c_char,
+) -> i32 {
+    if ctx.is_null() { return -1; }
+    let ctx = unsafe { &*ctx };
+    if !ctx.initialized.load(Ordering::SeqCst) { return -1; }
+
+    let dir = c_str_to_string(save_dir);
+    let save_path = if dir.is_empty() {
+        std::path::PathBuf::from("/tmp/QuickShare")
+    } else {
+        std::path::PathBuf::from(&dir)
+    };
+    std::fs::create_dir_all(&save_path).ok();
+
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    {
+        let mut guard = LISTENER_SHUTDOWN.lock();
+        if guard.is_some() {
+            tracing::warn!("Listener already running, stopping first");
+            if let Some(tx) = guard.take() {
+                let _ = tx.send(true);
+            }
+        }
+        *guard = Some(shutdown_tx);
+    }
+
+    let device_name = ctx.device_name.clone();
+
+    get_runtime().spawn(async move {
+        let listener = match ConnectionListener::new(DEFAULT_PORT).await {
+            Ok(l) => l,
+            Err(e) => {
+                tracing::error!("Failed to start TCP listener: {}", e);
+                return;
+            }
+        };
+
+        tracing::info!("TCP listener running on port {}", DEFAULT_PORT);
+
+        let mut rx = shutdown_rx;
+        loop {
+            tokio::select! {
+                result = listener.accept(&device_name, 3, CryptoContext::new()) => {
+                    match result {
+                        Ok(conn) => {
+                            let peer = conn.peer_addr();
+                            let device_id = conn.endpoint_id().to_string();
+                            tracing::info!("Accepted connection from {} (endpoint: {})", peer, device_id);
+                            let save_dir = save_path.clone();
+                            tokio::spawn(async move {
+                                let mut receiver = crate::transfer::receiver::FileReceiver::new(
+                                    conn,
+                                    CryptoContext::new(),
+                                    save_dir,
+                                    device_id,
+                                    0,
+                                );
+                                if let Err(e) = receiver.receive_file().await {
+                                    tracing::error!("Failed to receive file: {}", e);
+                                }
+                            });
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to accept connection: {}", e);
+                        }
+                    }
+                }
+                _ = rx.changed() => {
+                    if *rx.borrow() {
+                        tracing::info!("Listener shutdown signal received");
+                        break;
+                    }
+                }
+            }
+        }
+
+        tracing::info!("TCP listener stopped");
+    });
+
+    tracing::info!("TCP listener started on port {}", DEFAULT_PORT);
+    0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn qs_stop_listener(_ctx: *mut QsContext) -> i32 {
+    let mut guard = LISTENER_SHUTDOWN.lock();
+    if let Some(tx) = guard.take() {
+        let _ = tx.send(true);
+        tracing::info!("Listener shutdown initiated");
+        0
+    } else {
+        tracing::warn!("No listener running");
+        -1
+    }
+}
+
+// === File sending ===
+
+#[unsafe(no_mangle)]
+pub extern "C" fn qs_send_file(
+    ctx: *mut QsContext,
+    device_ip: *const c_char,
+    port: i32,
+    endpoint_id: *const c_char,
+    file_path: *const c_char,
+) -> i32 {
+    if ctx.is_null() { return -1; }
+    let ctx = unsafe { &*ctx };
+    if !ctx.initialized.load(Ordering::SeqCst) { return -1; }
+
+    let ip = c_str_to_string(device_ip);
+    let eid = c_str_to_string(endpoint_id);
+    let path_str = c_str_to_string(file_path);
+    let port = port as u16;
+
+    let path = std::path::Path::new(&path_str);
+    if !path.exists() {
+        tracing::error!("File not found: {}", path_str);
+        return -2;
+    }
+
+    let addr: SocketAddr = match format!("{}:{}", ip, port).parse() {
+        Ok(a) => a,
+        Err(e) => {
+            tracing::error!("Invalid address {}:{}: {}", ip, port, e);
+            return -3;
+        }
+    };
+
+    let transfer_id = uuid::Uuid::new_v4().to_string();
+    let device_id = eid.clone();
+
+    // Store for progress callback
+    {
+        *CURRENT_TRANSFER_ID.lock() = Some(transfer_id.clone());
+        *CURRENT_DEVICE_ID.lock() = Some(device_id.clone());
+    }
+
+    tracing::info!("Sending file to {} ({}): {}", addr, eid, path_str);
+
+    let result = get_runtime().block_on(async {
+        let crypto = CryptoContext::new();
+        let conn = match Connection::connect(addr, eid, &ctx.device_name, 3, crypto).await {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::error!("Failed to connect to {}: {}", addr, e);
+                return Err(e);
+            }
+        };
+
+        let crypto2 = CryptoContext::new();
+        let mut sender = FileSender::new(conn, crypto2);
+        sender.send_file(path).await
+    });
+
+    // Report completion or error
+    let callbacks = CALLBACKS.lock();
+    if let Some((cb, user_data)) = callbacks.transfer {
+        let tid = CString::new(transfer_id).unwrap();
+        let did = CString::new(device_id).unwrap();
+        match &result {
+            Ok(()) => {
+                tracing::info!("File sent successfully");
+                cb(tid.as_ptr(), did.as_ptr(), 2, 0, 0, user_data);
+                0
+            }
+            Err(e) => {
+                tracing::error!("Send failed: {}", e);
+                cb(tid.as_ptr(), did.as_ptr(), 3, 0, 0, user_data);
+                -4
+            }
+        }
+    } else {
+        match &result {
+            Ok(()) => 0,
+            Err(_) => -4,
+        }
+    }
+}
+
 // === Public FFI API ===
 
 #[unsafe(no_mangle)]
@@ -108,28 +320,22 @@ pub extern "C" fn qs_init(
     let cb_pair = log_cb.map(|cb| (cb, log_user_data));
     init_logging(cb_pair);
 
+    // Initialize progress callback bridge
+    init_progress_bridge();
+
     tracing::info!("qs_init: initializing with device_name='{}'", name);
 
     let runtime = get_runtime();
-
-    // Create BLE->mDNS re-broadcast channel
-    let (ble_mdns_sender, ble_mdns_receiver) = mpsc::channel::<()>(1);
 
     let ble = runtime.block_on(async {
         BleDiscovery::new().await.ok()
     });
 
-    let mdns = match MdnsDiscovery::new(Some(ble_mdns_receiver)) {
-        Ok(mdns) => Some(mdns),
-        Err(_) => None,
-    };
-
     let ctx = Box::new(QsContext {
         ble,
-        mdns,
         device_name: name,
         initialized: AtomicBool::new(true),
-        ble_mdns_sender: Some(ble_mdns_sender),
+        endpoint_id: parking_lot::Mutex::new(None),
     });
 
     Box::into_raw(ctx)
@@ -229,28 +435,39 @@ pub extern "C" fn qs_deny_transfer(request_id: *const c_char) -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn qs_start_advertising(ctx: *mut QsContext, device_type: i32) -> i32 {
+pub extern "C" fn qs_start_advertising(ctx: *mut QsContext, _device_type: i32) -> i32 {
     if ctx.is_null() { return -1; }
     let ctx = unsafe { &*ctx };
     if !ctx.initialized.load(Ordering::SeqCst) { return -1; }
 
-    let device_name = ctx.device_name.clone();
-    let dt = match device_type {
-        1 => DeviceType::Phone,
-        2 => DeviceType::Tablet,
-        3 => DeviceType::Laptop,
-        _ => DeviceType::Laptop,
-    };
+    // Generate endpoint_id on first call, reuse on subsequent calls.
+    // mDNS advertising is handled by Swift's NWListener (system Bonjour).
+    {
+        let mut guard = ctx.endpoint_id.lock();
+        if guard.is_none() {
+            let mut id = [0u8; 4];
+            rand::Rng::fill(&mut rand::thread_rng(), &mut id);
+            *guard = Some(id);
+        }
+    }
 
-    if let Some(ref mdns) = ctx.mdns {
-        get_runtime().block_on(async {
-            if mdns.start_advertising(&device_name, 5721, dt).await.is_err() {
-                return -1;
-            }
-            0
-        })
-    } else {
-        -1
+    0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn qs_get_endpoint_id(ctx: *mut QsContext) -> *mut c_char {
+    if ctx.is_null() { return std::ptr::null_mut(); }
+    let ctx = unsafe { &*ctx };
+    let guard = ctx.endpoint_id.lock();
+    match *guard {
+        Some(id) => {
+            let encoded = base64::Engine::encode(
+                &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+                id,
+            );
+            CString::new(encoded).unwrap_or_default().into_raw()
+        }
+        None => std::ptr::null_mut(),
     }
 }
 
@@ -258,14 +475,8 @@ pub extern "C" fn qs_start_advertising(ctx: *mut QsContext, device_type: i32) ->
 pub extern "C" fn qs_stop_advertising(ctx: *mut QsContext) -> i32 {
     if ctx.is_null() { return -1; }
     let ctx = unsafe { &*ctx };
-    if let Some(ref mdns) = ctx.mdns {
-        get_runtime().block_on(async {
-            mdns.stop_advertising().await.ok();
-            0
-        })
-    } else {
-        -1
-    }
+    if !ctx.initialized.load(Ordering::SeqCst) { return -1; }
+    0
 }
 
 #[unsafe(no_mangle)]
@@ -274,26 +485,8 @@ pub extern "C" fn qs_start_discovery(ctx: *mut QsContext) -> i32 {
     let ctx = unsafe { &*ctx };
     if !ctx.initialized.load(Ordering::SeqCst) { return -1; }
 
-    // Clone the BLE->mDNS sender for the scanning task
-    let ble_mdns_sender = ctx.ble_mdns_sender.clone();
-
-    // Start mDNS discovery
-    let mdns_result = if let Some(ref mdns) = ctx.mdns {
-        let cb_data = CALLBACKS.lock().device_found.map(|(cb, ud)| SendCallbackPair { cb, user_data: ud });
-        get_runtime().block_on(async {
-            mdns.start_discovery(move |device_name, _hostname, ip, port| {
-                if let Some(ref cb_data) = cb_data {
-                    let id_c = CString::new(format!("{}:{}", ip, port)).unwrap();
-                    let name_c = CString::new(device_name).unwrap();
-                    (cb_data.cb)(id_c.as_ptr(), name_c.as_ptr(), 1, cb_data.user_data);
-                }
-            }).await
-        })
-    } else {
-        Err(anyhow::anyhow!("No mDNS context"))
-    };
-
-    // Start BLE scanning (non-blocking, runs in background)
+    // BLE scanning is the primary discovery mechanism on macOS.
+    // mDNS browsing is handled by Swift's NWBrowser (system Bonjour stack).
     if let Some(ref ble) = ctx.ble {
         let cb_data = CALLBACKS.lock().device_found.map(|(cb, ud)| SendCallbackPair { cb, user_data: ud });
         get_runtime().block_on(async {
@@ -302,16 +495,15 @@ pub extern "C" fn qs_start_discovery(ctx: *mut QsContext) -> i32 {
                     if let Some(ref cb_data) = cb_data {
                         let id_c = CString::new(id).unwrap();
                         let name_c = CString::new(name).unwrap();
-                        // connection_type 0 = BLE
                         (cb_data.cb)(id_c.as_ptr(), name_c.as_ptr(), 0, cb_data.user_data);
                     }
                 },
-                ble_mdns_sender,
             ).await;
         });
+        0
+    } else {
+        -1
     }
-
-    if mdns_result.is_err() { -1 } else { 0 }
 }
 
 #[unsafe(no_mangle)]
@@ -319,19 +511,11 @@ pub extern "C" fn qs_stop_discovery(ctx: *mut QsContext) -> i32 {
     if ctx.is_null() { return -1; }
     let ctx = unsafe { &*ctx };
 
-    // Stop BLE scanning
     if let Some(ref ble) = ctx.ble {
         get_runtime().block_on(async {
             ble.stop_scanning().await.ok();
         });
-    }
-
-    // Stop mDNS discovery
-    if let Some(ref mdns) = ctx.mdns {
-        get_runtime().block_on(async {
-            mdns.stop_discovery().await.ok();
-            0
-        })
+        0
     } else {
         -1
     }
@@ -343,12 +527,9 @@ pub extern "C" fn qs_is_advertising(ctx: *mut QsContext) -> i32 {
     let ctx = unsafe { &*ctx };
     if !ctx.initialized.load(Ordering::SeqCst) { return 0; }
 
-    if let Some(ref mdns) = ctx.mdns {
-        if get_runtime().block_on(async { mdns.is_advertising().await }) {
-            return 1;
-        }
-    }
-    0
+    // Advertising state is managed by Swift (BleAdvertiser + MdnsAdvertiser).
+    // We report "advertising" if the endpoint_id has been generated.
+    ctx.endpoint_id.lock().is_some() as i32
 }
 
 #[unsafe(no_mangle)]
@@ -357,19 +538,11 @@ pub extern "C" fn qs_is_discovering(ctx: *mut QsContext) -> i32 {
     let ctx = unsafe { &*ctx };
     if !ctx.initialized.load(Ordering::SeqCst) { return 0; }
 
-    let mdns_discovering = if let Some(ref mdns) = ctx.mdns {
-        get_runtime().block_on(async { mdns.is_discovering().await })
+    if let Some(ref ble) = ctx.ble {
+        get_runtime().block_on(async { ble.is_scanning().await }) as i32
     } else {
-        false
-    };
-
-    let ble_scanning = if let Some(ref ble) = ctx.ble {
-        get_runtime().block_on(async { ble.is_scanning().await })
-    } else {
-        false
-    };
-
-    if mdns_discovering || ble_scanning { 1 } else { 0 }
+        0
+    }
 }
 
 #[unsafe(no_mangle)]

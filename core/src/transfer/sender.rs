@@ -2,10 +2,19 @@ use crate::protocol::*;
 use crate::transfer::connection::Connection;
 use crate::transfer::encryption::CryptoContext;
 use anyhow::{Result, anyhow};
+use rand::RngCore;
 use std::path::Path;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 use tracing::info;
+
+pub type ProgressCallback = fn(i64, i64, &str);
+
+static PROGRESS_CB: std::sync::OnceLock<ProgressCallback> = std::sync::OnceLock::new();
+
+pub fn set_progress_callback(cb: ProgressCallback) {
+    let _ = PROGRESS_CB.set(cb);
+}
 
 const CHUNK_SIZE: usize = 64 * 1024;
 
@@ -39,7 +48,34 @@ impl FileSender {
         let payload_id_bytes = super::encryption::generate_payload_id();
         let payload_id = i64::from_be_bytes(payload_id_bytes[..8].try_into().unwrap());
 
-        // 1. Send Introduction (sharing layer, via SecureMessage)
+        // 1. Send PairedKeyEncryption frame
+        let mut signed_data = vec![0u8; 32];
+        rand::thread_rng().fill_bytes(&mut signed_data);
+        let mut secret_id_hash = vec![0u8; 32];
+        rand::thread_rng().fill_bytes(&mut secret_id_hash);
+
+        let paired_enc = SharingFrame::new_paired_key_encryption(signed_data, secret_id_hash);
+        self.connection.send_secure(&paired_enc).await?;
+        info!("Sent PairedKeyEncryption frame");
+
+        // 2. Receive peer's PairedKeyEncryption frame
+        let _peer_paired_enc: SharingFrame = self.connection.recv_secure().await?;
+        info!("Received peer PairedKeyEncryption frame");
+
+        // 3. Send PairedKeyResult (UNABLE)
+        let paired_result = SharingFrame::new_paired_key_result(PairedKeyResultStatus::Unable);
+        self.connection.send_secure(&paired_result).await?;
+        info!("Sent PairedKeyResult frame (UNABLE)");
+
+        // 4. Receive peer's PairedKeyResult
+        let peer_paired_result: SharingFrame = self.connection.recv_secure().await?;
+        if let Some(v1) = &peer_paired_result.v1 {
+            if let Some(result) = &v1.paired_key_result {
+                info!("Received peer PairedKeyResult frame (status={:?})", result.status);
+            }
+        }
+
+        // 5. Send Introduction (sharing layer, via SecureMessage)
         let file_meta = FileMetadata {
             name: Some(file_name.clone()),
             r#type: Some(sharing_proto::file_metadata::Type::Image as i32),
@@ -52,30 +88,27 @@ impl FileSender {
         self.connection.send_secure(&intro).await?;
         info!("Sent Introduction frame");
 
-        // 2. Send PairedKeyEncryption (empty — we don't have Google certs)
-        let paired_enc = SharingFrame {
-            version: Some(sharing_proto::frame::Version::V1 as i32),
-            v1: Some(sharing_proto::V1Frame {
-                r#type: Some(SharingFrameType::PairedKeyEncryption as i32),
-                introduction: None,
-                connection_response: None,
-                paired_key_encryption: Some(SharingPairedKeyEncryption {
-                    signed_data: Some(Vec::new()),
-                    secret_id_hash: None,
-                    optional_signed_data: None,
-                }),
-                paired_key_result: None,
-            }),
-        };
-        self.connection.send_secure(&paired_enc).await?;
-        info!("Sent PairedKeyEncryption frame");
-
-        // 3. Receive PairedKeyResult (expect UNABLE since no Google certs)
-        let paired_result: SharingFrame = self.connection.recv_secure().await?;
-        if let Some(v1) = &paired_result.v1 {
-            if let Some(result) = &v1.paired_key_result {
-                info!("PairedKeyResult status: {:?}", result.status);
+        // 6. Receive ConnectionResponse from peer (ACCEPT / REJECT)
+        let conn_resp_frame: SharingFrame = self.connection.recv_secure().await?;
+        if let Some(v1) = &conn_resp_frame.v1 {
+            if let Some(resp) = &v1.connection_response {
+                use sharing_proto::connection_response_frame::Status;
+                match resp.status {
+                    Some(s) if s == Status::Accept as i32 => {
+                        info!("Transfer accepted by peer");
+                    }
+                    Some(s) => {
+                        return Err(anyhow!("Transfer rejected by peer (status={})", s));
+                    }
+                    None => {
+                        return Err(anyhow!("Missing status in ConnectionResponse"));
+                    }
+                }
+            } else {
+                return Err(anyhow!("Missing connection_response in response frame"));
             }
+        } else {
+            return Err(anyhow!("Missing v1 in ConnectionResponse frame"));
         }
 
         // 4. Send file as OfflineFrame PayloadTransfer (via SecureMessage)
@@ -100,6 +133,11 @@ impl FileSender {
             self.connection.send_secure(&chunk).await?;
 
             offset += bytes_read as i64;
+
+            if let Some(cb) = PROGRESS_CB.get() {
+                cb(offset, file_size, &file_name);
+            }
+
             info!("Sent {}/{} bytes for {}", offset, file_size, file_name);
         }
 

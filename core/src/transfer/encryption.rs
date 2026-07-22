@@ -177,17 +177,17 @@ impl SecureMessageKeys {
     pub fn from_key_exchange(kx: &KeyExchangeResult, is_initiator: bool) -> Self {
         if is_initiator {
             SecureMessageKeys {
-                encrypt_key: kx.server_key,
-                decrypt_key: kx.client_key,
-                send_hmac_key: kx.server_hmac_key,
-                recv_hmac_key: kx.client_hmac_key,
-            }
-        } else {
-            SecureMessageKeys {
                 encrypt_key: kx.client_key,
                 decrypt_key: kx.server_key,
                 send_hmac_key: kx.client_hmac_key,
                 recv_hmac_key: kx.server_hmac_key,
+            }
+        } else {
+            SecureMessageKeys {
+                encrypt_key: kx.server_key,
+                decrypt_key: kx.client_key,
+                send_hmac_key: kx.server_hmac_key,
+                recv_hmac_key: kx.client_hmac_key,
             }
         }
     }

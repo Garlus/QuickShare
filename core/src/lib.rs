@@ -6,6 +6,7 @@ pub mod ffi;
 use std::sync::OnceLock;
 
 /// Global log callback for forwarding Rust logs to Swift.
+#[allow(dead_code)]
 struct LogCallback {
     cb: ffi::QsLogCb,
     user_data: *mut std::ffi::c_void,

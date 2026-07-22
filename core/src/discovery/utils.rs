@@ -28,7 +28,7 @@ impl DeviceType {
 
 /// Generate the mDNS service name in the format expected by Google QuickShare.
 ///
-/// Format: 11 bytes base64url-encoded
+/// Format: 10 bytes base64url-encoded
 ///   [0x23, endpoint_id[0..4], 0xFC, 0x9F, 0x5E, 0x00, 0x00]
 pub fn gen_mdns_name(endpoint_id: [u8; 4]) -> String {
     let mut name = Vec::with_capacity(11);
@@ -39,11 +39,10 @@ pub fn gen_mdns_name(endpoint_id: [u8; 4]) -> String {
     URL_SAFE_NO_PAD.encode(&name)
 }
 
-/// Generate the endpoint info for the mDNS TXT record "n" property.
+/// Generate raw endpoint info bytes for ConnectionRequest and mDNS TXT record.
 ///
-/// Format: base64url-encoded
-///   [device_type << 1, random[16], name_len, name_bytes...]
-pub fn gen_mdns_endpoint_info(device_type: DeviceType, device_name: &str) -> String {
+/// Format: [device_type << 1, random[16], name_len, name_bytes...]
+pub fn gen_raw_endpoint_info(device_type: DeviceType, device_name: &str) -> Vec<u8> {
     let mut record = Vec::new();
     record.push((device_type as u8) << 1);
 
@@ -55,6 +54,15 @@ pub fn gen_mdns_endpoint_info(device_type: DeviceType, device_name: &str) -> Str
     record.push(name_bytes.len() as u8);
     record.extend_from_slice(name_bytes);
 
+    record
+}
+
+/// Generate the endpoint info for the mDNS TXT record "n" property.
+///
+/// Format: base64url-encoded
+///   [device_type << 1, random[16], name_len, name_bytes...]
+pub fn gen_mdns_endpoint_info(device_type: DeviceType, device_name: &str) -> String {
+    let record = gen_raw_endpoint_info(device_type, device_name);
     URL_SAFE_NO_PAD.encode(&record)
 }
 

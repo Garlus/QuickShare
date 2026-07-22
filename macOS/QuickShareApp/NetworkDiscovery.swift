@@ -20,18 +20,26 @@ class NetworkDiscovery {
         params.includePeerToPeer = true
 
         let browser = NWBrowser(
-            for: .bonjour(type: "_FC9F5ED42C8A._tcp", domain: "local."),
+            for: .bonjour(type: "_FC9F5ED42C8A._tcp", domain: nil),
             using: params
         )
 
-        browser.stateUpdateHandler = { state in
+        browser.stateUpdateHandler = { [weak self] state in
             switch state {
             case .ready:
                 NSLog("[MdnsBrowser] Browser ready, scanning for QuickShare services...")
             case .failed(let error):
-                NSLog("[MdnsBrowser] Browser failed: \(error)")
+                let nsError = error as NSError
+                if nsError.code == -65555 {
+                    NSLog("[MdnsBrowser] Browser failed: NoAuth (-65555) — Local Network permission denied.")
+                    NSLog("[MdnsBrowser] → System Settings > Privacy & Security > Local Network > enable QuickShare")
+                } else {
+                    NSLog("[MdnsBrowser] Browser failed: \(error) (code=\(nsError.code))")
+                }
+                self?.browser = nil
             case .cancelled:
                 NSLog("[MdnsBrowser] Browser cancelled")
+                self?.browser = nil
             case .waiting(let error):
                 NSLog("[MdnsBrowser] Browser waiting: \(error)")
             default:
@@ -104,7 +112,8 @@ class NetworkDiscovery {
             return
         }
 
-        NSLog("[MdnsBrowser] Device: name='\(deviceName)' type=\(deviceType)")
+        let endpointId = Self.extractEndpointId(from: result.endpoint) ?? ""
+        NSLog("[MdnsBrowser] Device: name='\(deviceName)' type=\(deviceType) endpointId=\(endpointId)")
 
         // Resolve the endpoint to get IP:port
         resolveEndpoint(result.endpoint) { [weak self] ip, port in
@@ -114,8 +123,28 @@ class NetworkDiscovery {
             }
 
             NSLog("[MdnsBrowser] Resolved to \(ip):\(port)")
-            self?.onDeviceFound?(deviceName, "", ip, port)
+            self?.onDeviceFound?(deviceName, endpointId, ip, port)
         }
+    }
+
+    /// Extract 4-byte base64url endpoint ID from Bonjour service instance name.
+    static func extractEndpointId(from endpoint: NWEndpoint) -> String? {
+        guard case .service(let name, _, _, _) = endpoint else { return nil }
+        var padded = name
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        let remainder = padded.count % 4
+        if remainder != 0 {
+            padded += String(repeating: "=", count: 4 - remainder)
+        }
+        guard let data = Data(base64Encoded: padded), data.count >= 5, data[0] == 0x23 else {
+            return nil
+        }
+        let epIdData = data[1..<5]
+        return epIdData.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
     }
 
     private func resolveEndpoint(_ endpoint: NWEndpoint, completion: @escaping (String?, UInt16) -> Void) {

@@ -8,6 +8,8 @@ use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 use tracing::{info, warn};
 
+use rand::RngCore;
+
 pub struct FileReceiver {
     connection: Connection,
     #[allow(dead_code)]
@@ -23,7 +25,30 @@ impl FileReceiver {
     }
 
     pub async fn receive_file(&mut self) -> Result<()> {
-        // 1. Receive Introduction frame (sharing layer, via SecureMessage)
+        // 1. Receive peer's PairedKeyEncryption frame
+        let _peer_paired_enc: SharingFrame = self.connection.recv_secure().await?;
+        info!("Received PairedKeyEncryption frame");
+
+        // 2. Send PairedKeyEncryption frame back
+        let mut signed_data = vec![0u8; 32];
+        rand::thread_rng().fill_bytes(&mut signed_data);
+        let mut secret_id_hash = vec![0u8; 32];
+        rand::thread_rng().fill_bytes(&mut secret_id_hash);
+
+        let paired_enc = SharingFrame::new_paired_key_encryption(signed_data, secret_id_hash);
+        self.connection.send_secure(&paired_enc).await?;
+        info!("Sent PairedKeyEncryption frame");
+
+        // 3. Receive peer's PairedKeyResult frame
+        let _peer_paired_result: SharingFrame = self.connection.recv_secure().await?;
+        info!("Received PairedKeyResult frame");
+
+        // 4. Send PairedKeyResult (UNABLE)
+        let result = SharingFrame::new_paired_key_result(PairedKeyResultStatus::Unable);
+        self.connection.send_secure(&result).await?;
+        info!("Sent PairedKeyResult (UNABLE)");
+
+        // 5. Receive Introduction frame (sharing layer, via SecureMessage)
         let intro_frame: SharingFrame = self.connection.recv_secure().await?;
         let v1 = intro_frame.v1.as_ref()
             .ok_or_else(|| anyhow!("Introduction missing v1"))?;
@@ -40,7 +65,7 @@ impl FileReceiver {
 
         info!("Incoming file: {} ({} bytes) from {}", file_name, file_size, self.device_name);
 
-        // 2. Ask user to accept
+        // 6. Ask user to accept
         let (_request_id, rx) = ffi::register_incoming_transfer(
             &self.device_name,
             file_name,
@@ -50,20 +75,15 @@ impl FileReceiver {
         let accepted = rx.await.unwrap_or(false);
         if !accepted {
             warn!("User denied file transfer from {}", self.device_name);
-            // Send PairedKeyResult with REJECT
-            let reject = SharingFrame::new_paired_key_result(PairedKeyResultStatus::Fail);
+            let reject = SharingFrame::new_connection_response(false);
             self.connection.send_secure(&reject).await.ok();
             return Err(anyhow!("Transfer denied by user"));
         }
 
-        // 3. Receive PairedKeyEncryption (we don't verify it, just consume it)
-        let _paired_enc: SharingFrame = self.connection.recv_secure().await?;
-        info!("Received PairedKeyEncryption");
-
-        // 4. Send PairedKeyResult (UNABLE — no Google certs)
-        let result = SharingFrame::new_paired_key_result(PairedKeyResultStatus::Unable);
-        self.connection.send_secure(&result).await?;
-        info!("Sent PairedKeyResult (UNABLE)");
+        // Send ConnectionResponse(ACCEPT)
+        let conn_resp = SharingFrame::new_connection_response(true);
+        self.connection.send_secure(&conn_resp).await?;
+        info!("Sent ConnectionResponse (ACCEPT)");
 
         // 5. Receive PayloadTransfer header (OfflineFrame via SecureMessage)
         let transfer_frame: OfflineFrame = self.connection.recv_secure().await?;

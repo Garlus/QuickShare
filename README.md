@@ -2,6 +2,20 @@
 
 A macOS implementation of Google QuickShare — send and receive files with Android devices over Wi-Fi and Bluetooth.
 
+## Screenshots
+
+![Main Window with Shader](Concept/App%20mit%20Shader.jpg)
+*Main window with animated liquid glass background*
+
+![Device Picker](Concept/Frame%202.png)
+*Selecting a target device to send files*
+
+![Sending in Progress](Concept/Frame%203.png)
+*File transfer progress*
+
+![Incoming Transfer](Concept/Frame%206.png)
+*Receiving a file from an Android device*
+
 ## How it works
 
 QuickShare uses the same protocol as Google's Nearby Share / QuickShare to transfer files between macOS and Android. It discovers nearby devices via BLE advertisements and mDNS, then establishes an encrypted connection using the UKEY2 handshake protocol.
@@ -33,9 +47,10 @@ open QuickShare.xcodeproj
 - **SwiftUI** — macOS native UI
 - **Rust** — core protocol engine (UKEY2, AES-256-CBC, HMAC-SHA256)
 - **Metal** — animated shader background
-- [mdns-sd](https://github.com/keksour/mdns-sd) + [NWBrowser](https://developer.apple.com/networking/nwbrowser/) — device discovery
-- [btleplug](https://github.com/deviceplug/btleplug) — BLE scanning
+- **NWBrowser / NetService** — mDNS discovery and advertising
+- **btleplug** — BLE scanning
+- **CoreBluetooth** — BLE advertising
 
 ## Status
 
-Early development. Basic protocol handshake with Android devices is implemented. File transfer in progress.
+Functional. Supports file transfer with Android devices over LAN (mDNS discovery, UKEY2 handshake, AES-256-CBC encryption).

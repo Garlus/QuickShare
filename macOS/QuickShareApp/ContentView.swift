@@ -55,8 +55,8 @@ struct ContentView: View {
         .toolbar {
             ToolbarItemGroup(placement: .principal) {
                 Picker("Mode", selection: $model.isActive) {
-                    Text("Recieve off").tag(false)
-                    Text("Recieve on").tag(true)
+                    Text("Receive off").tag(false)
+                    Text("Receive on").tag(true)
                 }
                 .pickerStyle(.segmented)
                 .frame(width: 180)
@@ -163,13 +163,11 @@ struct DevicePickerSheetView: View {
             isSending = true
         }
 
-        Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { timer in
-            if sendProgress < 1.0 {
-                sendProgress += 0.05
-            } else {
-                timer.invalidate()
-                isPresented = false
-            }
+        model.sendFiles(to: device, fileURLs: files)
+
+        // Dismiss after a short delay to show progress UI
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            self.isPresented = false
         }
     }
 }

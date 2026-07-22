@@ -15,6 +15,8 @@ class QuickShareModel {
 
     private var core: QuickShare?
     private let networkBrowser = NetworkDiscovery()
+    private let bleAdvertiser = BleAdvertiser()
+    private let mdnsAdvertiser = MdnsAdvertiser()
 
     init() {
         startCore()
@@ -23,6 +25,7 @@ class QuickShareModel {
     struct DiscoveredDevice: Identifiable {
         let id: String
         let name: String
+        let endpointId: String
         let connectionType: String
     }
 
@@ -44,6 +47,7 @@ class QuickShareModel {
     private var incomingFiles: [IncomingFile] = []
     private var incomingDeviceName: String = ""
     private var incomingDebounceTimer: Timer?
+    private var isSending = false
 
     private func startCore() {
         if core != nil { return }
@@ -54,7 +58,7 @@ class QuickShareModel {
                     // Deduplicate: check if device already exists
                     if !(self?.discoveredDevices.contains(where: { $0.id == device.id }) ?? true) {
                         self?.discoveredDevices.append(
-                            DiscoveredDevice(id: device.id, name: device.name, connectionType: "\(device.connectionType)")
+                            DiscoveredDevice(id: device.id, name: device.name, endpointId: device.id, connectionType: "\(device.connectionType)")
                         )
                     }
                     self?.isDiscovering = true
@@ -79,12 +83,16 @@ class QuickShareModel {
 
         // Start native macOS mDNS browser (NWBrowser) for service discovery
         // This works because NWBrowser uses the system's mDNSResponder
-        networkBrowser.start { [weak self] deviceName, hostname, ip, port in
+        networkBrowser.start { [weak self] deviceName, endpointId, ip, port in
             let id = "\(ip):\(port)"
+            let epId = endpointId.isEmpty ? Data(deviceName.utf8).base64EncodedString()
+                .replacingOccurrences(of: "+", with: "-")
+                .replacingOccurrences(of: "/", with: "_")
+                .replacingOccurrences(of: "=", with: "") : endpointId
             DispatchQueue.main.async {
                 if !(self?.discoveredDevices.contains(where: { $0.id == id }) ?? true) {
                     self?.discoveredDevices.append(
-                        DiscoveredDevice(id: id, name: deviceName, connectionType: "mDNS")
+                        DiscoveredDevice(id: id, name: deviceName, endpointId: epId, connectionType: "mDNS")
                     )
                     self?.isDiscovering = true
                 }
@@ -92,9 +100,9 @@ class QuickShareModel {
         }
 
         if isActive {
-            _ = core?.startAdvertising()
+            startAdvertising()
         } else {
-            _ = core?.stopAdvertising()
+            stopAdvertising()
         }
     }
 
@@ -161,13 +169,68 @@ class QuickShareModel {
             return
         }
         if isActive {
-            _ = core?.startAdvertising()
+            startAdvertising()
         } else {
-            _ = core?.stopAdvertising()
+            stopAdvertising()
         }
     }
 
+    private func startAdvertising() {
+        guard let core = core else {
+            NSLog("[Model] startAdvertising: core is nil")
+            return
+        }
+
+        let advResult = core.startAdvertising()
+        NSLog("[Model] core.startAdvertising() returned: \(advResult)")
+        guard advResult else {
+            NSLog("[Model] startAdvertising: core.startAdvertising() returned false")
+            return
+        }
+
+        guard let endpointIdStr = core.getEndpointId() else {
+            NSLog("[Model] startAdvertising: getEndpointId() returned nil")
+            return
+        }
+        NSLog("[Model] endpointIdStr: \(endpointIdStr)")
+
+        guard let endpointId = decodeEndpointId(endpointIdStr) else {
+            NSLog("[Model] Failed to decode endpointId: \(endpointIdStr)")
+            return
+        }
+
+        // Start TCP listener for incoming transfers
+        let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first?.path ?? "/tmp"
+        _ = core.startListener(saveDir: downloads)
+        NSLog("[Model] TCP listener started")
+
+        bleAdvertiser.startAdvertising(endpointId: endpointId)
+        mdnsAdvertiser.start(endpointId: endpointId, deviceName: deviceName)
+
+        NSLog("[Model] Advertising started: BLE + mDNS")
+    }
+
+    private func stopAdvertising() {
+        bleAdvertiser.stopAdvertising()
+        mdnsAdvertiser.stop()
+        _ = core?.stopListener()
+        _ = core?.stopAdvertising()
+        NSLog("[Model] Advertising + listener stopped")
+    }
+
+    private func decodeEndpointId(_ str: String) -> [UInt8]? {
+        let base64 = str
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        let paddedLen = ((base64.count + 3) / 4) * 4
+        let padded = base64.padding(toLength: paddedLen, withPad: "=", startingAt: 0)
+        guard let data = Data(base64Encoded: padded), data.count == 4 else { return nil }
+        return [UInt8](data)
+    }
+
     private func stopCore() {
+        bleAdvertiser.stopAdvertising()
+        mdnsAdvertiser.stop()
         _ = core?.stopAdvertising()
         _ = core?.stopDiscovery()
         networkBrowser.stop()
@@ -179,12 +242,16 @@ class QuickShareModel {
     func startDiscovery() {
         if core == nil { return }
         _ = core?.startDiscovery()
-        networkBrowser.start { [weak self] deviceName, hostname, ip, port in
+        networkBrowser.start { [weak self] deviceName, endpointId, ip, port in
             let id = "\(ip):\(port)"
+            let epId = endpointId.isEmpty ? Data(deviceName.utf8).base64EncodedString()
+                .replacingOccurrences(of: "+", with: "-")
+                .replacingOccurrences(of: "/", with: "_")
+                .replacingOccurrences(of: "=", with: "") : endpointId
             DispatchQueue.main.async {
                 if !(self?.discoveredDevices.contains(where: { $0.id == id }) ?? true) {
                     self?.discoveredDevices.append(
-                        DiscoveredDevice(id: id, name: deviceName, connectionType: "mDNS")
+                        DiscoveredDevice(id: id, name: deviceName, endpointId: epId, connectionType: "mDNS")
                     )
                     self?.isDiscovering = true
                 }
@@ -197,5 +264,62 @@ class QuickShareModel {
         _ = core?.stopDiscovery()
         networkBrowser.stop()
         isDiscovering = false
+    }
+
+    func sendFiles(to device: DiscoveredDevice, fileURLs: [URL]) {
+        guard !isSending, let core = core else { return }
+        isSending = true
+
+        let parts = device.id.split(separator: ":")
+        let ip: String
+        let port: Int32
+        if parts.count == 2 {
+            ip = String(parts[0])
+            port = Int32(parts[1]) ?? 5721
+        } else {
+            ip = device.id
+            port = 5721
+        }
+
+        let endpointId = device.endpointId.isEmpty ? Data(device.name.utf8).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "") : device.endpointId
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+
+            for url in fileURLs {
+                let path = url.path
+                let fileName = url.lastPathComponent
+
+                DispatchQueue.main.async {
+                    self.transfers.append(
+                        TransferProgress(id: UUID().uuidString, fileName: fileName, bytesSent: 0, bytesTotal: 1, status: "Sending")
+                    )
+                }
+
+                NSLog("[Model] Sending \(path) to \(ip):\(port)")
+                let result = core.sendFile(deviceIp: ip, port: port, endpointId: endpointId, filePath: path)
+
+                DispatchQueue.main.async {
+                    if result {
+                        NSLog("[Model] Successfully sent \(fileName)")
+                        self.transfers.append(
+                            TransferProgress(id: UUID().uuidString, fileName: fileName, bytesSent: 1, bytesTotal: 1, status: "Completed")
+                        )
+                    } else {
+                        NSLog("[Model] Failed to send \(fileName)")
+                        self.transfers.append(
+                            TransferProgress(id: UUID().uuidString, fileName: fileName, bytesSent: 0, bytesTotal: 1, status: "Failed")
+                        )
+                    }
+                }
+            }
+
+            DispatchQueue.main.async {
+                self.isSending = false
+            }
+        }
     }
 }

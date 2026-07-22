@@ -57,6 +57,16 @@ int qs_stop_advertising(QsContext* ctx);
 int qs_start_discovery(QsContext* ctx);
 int qs_stop_discovery(QsContext* ctx);
 
+// BLE advertising — returns base64url-encoded 4-byte endpoint ID (caller must qs_free_string)
+char* qs_get_endpoint_id(QsContext* ctx);
+
+// TCP listener for incoming transfers
+int qs_start_listener(QsContext* ctx, const char* save_dir);
+int qs_stop_listener(QsContext* ctx);
+
+// File sending (blocking — call from background thread)
+int qs_send_file(QsContext* ctx, const char* device_ip, int port, const char* endpoint_id, const char* file_path);
+
 // Status
 int qs_is_advertising(QsContext* ctx);
 int qs_is_discovering(QsContext* ctx);

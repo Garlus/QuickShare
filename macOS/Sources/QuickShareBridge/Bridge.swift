@@ -133,6 +133,43 @@ public class QuickShare: @unchecked Sendable {
     public static var version: String {
         String(cString: qs_version())
     }
+
+    public func getEndpointId() -> String? {
+        let ptr = qs_get_endpoint_id(ctx)
+        guard let ptr = ptr else { return nil }
+        let result = String(cString: ptr)
+        qs_free_string(ptr)
+        return result
+    }
+
+    // MARK: - TCP Listener (for incoming transfers)
+
+    public func startListener(saveDir: String = NSHomeDirectory() + "/Downloads") -> Bool {
+        saveDir.withCString { ptr in
+            qs_start_listener(ctx, ptr) == 0
+        }
+    }
+
+    public func stopListener() -> Bool {
+        qs_stop_listener(ctx) == 0
+    }
+
+    // MARK: - File Sending (blocking — call from background thread)
+
+    public func sendFile(
+        deviceIp: String,
+        port: Int32 = 5721,
+        endpointId: String,
+        filePath: String
+    ) -> Bool {
+        deviceIp.withCString { ipPtr in
+            endpointId.withCString { eidPtr in
+                filePath.withCString { pathPtr in
+                    qs_send_file(ctx, ipPtr, port, eidPtr, pathPtr) == 0
+                }
+            }
+        }
+    }
 }
 
 // MARK: - C Callback Trampolines

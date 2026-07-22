@@ -323,4 +323,43 @@ impl SharingFrame {
             }),
         }
     }
+
+    pub fn new_paired_key_encryption(signed_data: Vec<u8>, secret_id_hash: Vec<u8>) -> Self {
+        SharingFrame {
+            version: Some(sharing_proto::frame::Version::V1 as i32),
+            v1: Some(SharingV1Frame {
+                r#type: Some(SharingFrameType::PairedKeyEncryption as i32),
+                introduction: None,
+                connection_response: None,
+                paired_key_encryption: Some(SharingPairedKeyEncryption {
+                    signed_data: Some(signed_data),
+                    secret_id_hash: Some(secret_id_hash),
+                    optional_signed_data: None,
+                }),
+                paired_key_result: None,
+            }),
+        }
+    }
+
+    pub fn new_connection_response(accept: bool) -> Self {
+        use sharing_proto::connection_response_frame::Status;
+        let status = if accept {
+            Status::Accept as i32
+        } else {
+            Status::Reject as i32
+        };
+
+        SharingFrame {
+            version: Some(sharing_proto::frame::Version::V1 as i32),
+            v1: Some(SharingV1Frame {
+                r#type: Some(SharingFrameType::Response as i32),
+                introduction: None,
+                connection_response: Some(sharing_proto::ConnectionResponseFrame {
+                    status: Some(status),
+                }),
+                paired_key_encryption: None,
+                paired_key_result: None,
+            }),
+        }
+    }
 }

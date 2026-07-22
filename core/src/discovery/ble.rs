@@ -1,10 +1,10 @@
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 use anyhow::{Result, Context, anyhow};
 use btleplug::api::{Central, CentralEvent, Manager as _, ScanFilter};
 use btleplug::platform::{Manager, Adapter};
 use futures::stream::StreamExt;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::Mutex;
 use tokio::time;
 use tracing::{info, warn, debug};
 use uuid::Uuid;
@@ -14,9 +14,6 @@ const QUICKSHARE_SERVICE_UUID: Uuid = Uuid::from_bytes([
     0x00, 0x00, 0xFE, 0x2C, 0x00, 0x00, 0x10, 0x00,
     0x80, 0x00, 0x00, 0x80, 0x5F, 0x9B, 0x34, 0xFB,
 ]);
-
-/// Minimum interval between BLE notifications to prevent spam.
-const BLE_NOTIFY_INTERVAL: Duration = Duration::from_secs(30);
 
 pub struct BleDiscovery {
     adapter: Option<Adapter>,
@@ -47,7 +44,6 @@ impl BleDiscovery {
     pub async fn start_scanning<F>(
         &self,
         on_device_found: F,
-        ble_mdns_sender: Option<mpsc::Sender<()>>,
     ) -> Result<()>
     where
         F: FnMut(String, String, Vec<u8>) + Send + 'static,
@@ -73,7 +69,6 @@ impl BleDiscovery {
         *scanning = true;
         let is_scanning_clone = self.is_scanning.clone();
         let mut on_device_found = on_device_found;
-        let mut last_notify = SystemTime::UNIX_EPOCH;
 
         tokio::spawn(async move {
             info!("BLE event listener started, scanning for QuickShare advertisements...");
@@ -99,15 +94,6 @@ impl BleDiscovery {
 
                                 let name = format!("BLE-{}", id);
                                 on_device_found(id.to_string(), name, data);
-
-                                if let Some(ref sender) = ble_mdns_sender {
-                                    let now = SystemTime::now();
-                                    if now.duration_since(last_notify).unwrap_or_default() > BLE_NOTIFY_INTERVAL {
-                                        let _ = sender.try_send(());
-                                        last_notify = now;
-                                        info!("Notified mDNS for re-broadcast due to BLE event");
-                                    }
-                                }
                             }
                             CentralEvent::DeviceConnected(id) => {
                                 debug!("BLE DeviceConnected: id='{}'", id);
